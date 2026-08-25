@@ -1,0 +1,2 @@
+; Add this line to your server's existing ue4ss/Mods/mods.txt
+scum_simple_rcon : 1
