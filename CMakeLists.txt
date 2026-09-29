@@ -20,6 +20,16 @@ target_compile_definitions(${TARGET} PRIVATE
     WIN32_LEAN_AND_MEAN
     NOMINMAX
     _WINSOCK_DEPRECATED_NO_WARNINGS
+    # The UE4SS headers pick platform and member-layout headers from these,
+    # matching the Development Win64 game build the mod is loaded by. The
+    # profiler and STATS switches are deliberately left off: they only add
+    # instrumentation this mod does not use, and they pull in Tracy.
+    UE_GAME
+    UE_BUILD_DEVELOPMENT
+    PLATFORM_WINDOWS
+    PLATFORM_MICROSOFT
+    OVERRIDE_PLATFORM_HEADER_NAME=Windows
+    UBT_COMPILED_PLATFORM=Win64
 )
 
 if(MSVC)
@@ -43,15 +53,30 @@ if(NOT EXISTS "${UE4SS_SOURCE_DIR}/UE4SS/include/UE4SSRuntime.hpp")
     message(FATAL_ERROR "UE4SS_SOURCE_DIR does not look like a RE-UE4SS checkout: ${UE4SS_SOURCE_DIR}")
 endif()
 
-# UE4SS public headers include each other across UE4SS/include and several
-# deps/first/*/include roots, so add every one that exists.
+# UE4SS public headers include each other across UE4SS/include, the checked-in
+# generated member-layout headers, and several deps/first/*/include roots, so
+# add every one that exists rather than tracking them by hand.
 file(GLOB UE4SS_INCLUDE_DIRS "${UE4SS_SOURCE_DIR}/UE4SS/include")
+file(GLOB UE4SS_GENERATED_INCLUDE_DIRS
+    "${UE4SS_SOURCE_DIR}/UE4SS/generated_include"
+    "${UE4SS_SOURCE_DIR}/deps/first/*/generated_include")
 file(GLOB UE4SS_DEP_INCLUDE_DIRS "${UE4SS_SOURCE_DIR}/deps/first/*/include")
-foreach(ue4ss_include_dir IN LISTS UE4SS_DEP_INCLUDE_DIRS)
+foreach(ue4ss_include_dir IN LISTS UE4SS_GENERATED_INCLUDE_DIRS UE4SS_DEP_INCLUDE_DIRS)
     if(IS_DIRECTORY "${ue4ss_include_dir}")
         list(APPEND UE4SS_INCLUDE_DIRS "${ue4ss_include_dir}")
     endif()
 endforeach()
+
+# UE4SS's own headers pull in fmt (DynamicOutput), ImGui plus TextEditor (the
+# mod base class exposes a GUI tab) and Zydis (the Unreal headers), none of
+# which ship in the RE-UE4SS repository. Pass their include roots here.
+if(DEFINED UE4SS_EXTRA_INCLUDE_DIRS)
+    foreach(ue4ss_extra_include_dir IN LISTS UE4SS_EXTRA_INCLUDE_DIRS)
+        if(IS_DIRECTORY "${ue4ss_extra_include_dir}")
+            list(APPEND UE4SS_INCLUDE_DIRS "${ue4ss_extra_include_dir}")
+        endif()
+    endforeach()
+endif()
 
 target_include_directories(${TARGET} PRIVATE ${UE4SS_INCLUDE_DIRS})
 target_link_libraries(${TARGET} PRIVATE ws2_32)

@@ -244,12 +244,49 @@ jobs:
           if (-not (Test-Path $unreal)) { throw "Unreal submodule headers missing at $unreal" }
           "UE4SS_SOURCE_DIR=$src" | Add-Content -LiteralPath $env:GITHUB_ENV
 
+      - name: Fetch the UE4SS third-party headers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # These are the versions RE-UE4SS itself pins for fmt, ImGui,
+          # ImGuiColorTextEdit and Zydis. Only their headers are needed: the mod
+          # imports every UE4SS symbol from UE4SS.dll at load time, but its
+          # public headers include these libraries.
+          $deps = @(
+            @{ Name = 'fmt';             Repo = 'https://github.com/fmtlib/fmt.git';                        Tag = '11.2.0';  Include = 'include' },
+            @{ Name = 'imgui';           Repo = 'https://github.com/ocornut/imgui.git';                     Tag = 'v1.92.1'; Include = '.' },
+            @{ Name = 'imguitextedit';   Repo = 'https://github.com/UE4SS-RE/ImGuiColorTextEdit.git';       Tag = 'v1.2.0';  Include = '.' },
+            @{ Name = 'zydis';           Repo = 'https://github.com/zyantific/zydis.git';                   Tag = 'v4.1.1';  Include = 'include' }
+          )
+
+          $root = Join-Path $env:RUNNER_TEMP 'thirdparty'
+          $includes = @()
+          foreach ($dep in $deps) {
+            $dest = Join-Path $root $dep.Name
+            git clone --quiet --depth 1 --branch $dep.Tag $dep.Repo $dest
+            if ($LASTEXITCODE -ne 0) { throw "failed to fetch $($dep.Name) at $($dep.Tag)" }
+            $includes += (Join-Path $dest $dep.Include)
+          }
+
+          # DynamicOutput's public headers include <fmt/core.h>, the mod base
+          # class exposes a GUI tab whose console needs ImGui and TextEditor.h,
+          # and the Unreal headers need Zydis/Zydis.h.
+          foreach ($required in @('fmt/core.h', 'imgui.h', 'TextEditor.h', 'Zydis/Zydis.h')) {
+            $found = $includes | Where-Object { Test-Path (Join-Path $_ $required) }
+            if (-not $found) { throw "$required is missing from the fetched third-party headers" }
+            Write-Host "found $required under $found"
+          }
+
+          "UE4SS_EXTRA_INCLUDE_DIRS=$($includes -join ';')" | Add-Content -LiteralPath $env:GITHUB_ENV
+
       - name: Configure
         shell: pwsh
         run: |
           cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
             -DUE4SS_SOURCE_DIR="$env:UE4SS_SOURCE_DIR" `
-            -DUE4SS_DEF_FILE="$env:GITHUB_WORKSPACE/ue4ss-def/UE4SS.def"
+            -DUE4SS_DEF_FILE="$env:GITHUB_WORKSPACE/ue4ss-def/UE4SS.def" `
+            -DUE4SS_EXTRA_INCLUDE_DIRS="$env:UE4SS_EXTRA_INCLUDE_DIRS"
 
       - name: Build
         shell: pwsh
