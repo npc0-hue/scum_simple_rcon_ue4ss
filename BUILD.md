@@ -49,8 +49,35 @@ The header closure also reads `deps/first/Unreal`, which RE-UE4SS tracks as a
 submodule. If your checkout is missing it, initialize it first:
 
 ```bat
-git submodule update --init --recursive
+git submodule update --init --depth 1 deps/first/Unreal
 ```
+
+## Import library
+
+UE4SS marks its API `__declspec(dllimport)` for mods, so the link needs an
+import library. Building all of UE4SS to obtain one would drag in its Rust
+toolchain, so `ue4ss-def/UE4SS.def` lists the exports of the `UE4SS.dll` this
+mod is deployed against and `lib.exe` turns that list into the import library:
+
+```bat
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Game__Shipping__Win64 ^
+  -DUE4SS_SOURCE_DIR=C:\path\to\RE-UE4SS ^
+  -DUE4SS_DEF_FILE=ue4ss-def\UE4SS.def
+```
+
+Regenerate `ue4ss-def/UE4SS.def` whenever the target server's `UE4SS.dll`
+changes, so the exported symbol names keep matching:
+
+```sh
+python3 ue4ss-def/generate_def.py UE4SS.dll ue4ss-def/UE4SS.def
+```
+
+## Continuous integration
+
+`.github/workflows/build-windows.yml` builds the DLL on `windows-2022` and
+uploads it as an artifact. It needs a repository secret `UEPSS_DEPLOY_KEY`
+holding an SSH deploy key that can read `npc0-hue/RE-UE4SS` and
+`Re-UE4SS/UEPseudo`; the latter is private and only reachable over SSH.
 
 Required UE4SS hooks/settings:
 

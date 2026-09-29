@@ -56,6 +56,30 @@ endforeach()
 target_include_directories(${TARGET} PRIVATE ${UE4SS_INCLUDE_DIRS})
 target_link_libraries(${TARGET} PRIVATE ws2_32)
 
+# UE4SS declares its API as __declspec(dllimport) for mods, so the link needs an
+# import library. Building all of UE4SS just to obtain one would drag in its Rust
+# toolchain, so UE4SS_DEF_FILE can point at a module-definition file listing the
+# exports of the UE4SS.dll this mod is deployed against; lib.exe turns that into
+# the import library.
+if(UE4SS_DEF_FILE)
+    if(NOT MSVC)
+        message(FATAL_ERROR "UE4SS_DEF_FILE requires MSVC (lib.exe)")
+    endif()
+    if(NOT EXISTS "${UE4SS_DEF_FILE}")
+        message(FATAL_ERROR "UE4SS_DEF_FILE not found: ${UE4SS_DEF_FILE}")
+    endif()
+    set(UE4SS_IMPORT_LIB "${CMAKE_BINARY_DIR}/ue4ss-import/UE4SS.lib")
+    add_custom_command(
+        OUTPUT "${UE4SS_IMPORT_LIB}"
+        COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/ue4ss-import"
+        COMMAND "${CMAKE_AR}" /nologo /machine:x64 /def:"${UE4SS_DEF_FILE}" /out:"${UE4SS_IMPORT_LIB}"
+        DEPENDS "${UE4SS_DEF_FILE}"
+        VERBATIM)
+    add_custom_target(ue4ss_import_library DEPENDS "${UE4SS_IMPORT_LIB}")
+    add_dependencies(${TARGET} ue4ss_import_library)
+    target_link_libraries(${TARGET} PRIVATE "${UE4SS_IMPORT_LIB}")
+endif()
+
 set_target_properties(${TARGET} PROPERTIES
     OUTPUT_NAME "main"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/package/ue4ss/Mods/scum_simple_rcon/dlls"

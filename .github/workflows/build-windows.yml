@@ -1,0 +1,87 @@
+name: Build Windows DLL
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'CMakeLists.txt'
+      - 'ue4ss-def/**'
+      - '.github/workflows/build-windows.yml'
+
+env:
+  # The mod imports UE4SS symbols at load time, so the headers it compiles
+  # against must come from the same UE4SS revision the target server runs.
+  # c838a8ac is the build behind UE4SS.dll sha256 d0107f63e567313c...
+  UE4SS_REPO: npc0-hue/RE-UE4SS
+  UE4SS_REF: c838a8acaade1a0f860bdf249f039e58f4e10088
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out UE4SS headers
+        shell: pwsh
+        env:
+          UE4SS_DEPLOY_KEY: ${{ secrets.UEPSS_DEPLOY_KEY }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if (-not $env:UE4SS_DEPLOY_KEY) { throw 'secret UEPSS_DEPLOY_KEY is not set' }
+
+          $sshDir = Join-Path $env:RUNNER_TEMP 'ssh'
+          New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+          $keyPath = Join-Path $sshDir 'ue4ss_deploy_key'
+          Set-Content -LiteralPath $keyPath -Value $env:UE4SS_DEPLOY_KEY -NoNewline -Encoding ascii
+          icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+
+          $env:GIT_SSH_COMMAND = "ssh -i `"$keyPath`" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=NUL"
+
+          $src = Join-Path $env:RUNNER_TEMP 'ue4ss'
+          git init --quiet $src
+          git -C $src remote add origin "git@github.com:$env:UE4SS_REPO.git"
+          git -C $src fetch --depth 1 origin $env:UE4SS_REF
+          git -C $src checkout --quiet FETCH_HEAD
+          # Only deps/first/Unreal is needed: the UE4SS public headers include
+          # Unreal headers from it. patternsleuth is not in that closure.
+          git -C $src submodule update --init --depth 1 deps/first/Unreal
+
+          $header = Join-Path $src 'UE4SS/include/UE4SSRuntime.hpp'
+          if (-not (Test-Path $header)) { throw "UE4SS headers missing at $header" }
+          "UE4SS_SOURCE_DIR=$src" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64 `
+            -DUE4SS_SOURCE_DIR="$env:UE4SS_SOURCE_DIR" `
+            -DUE4SS_DEF_FILE="$env:GITHUB_WORKSPACE/ue4ss-def/UE4SS.def"
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build build --config Release --target scum_simple_rcon
+
+      - name: Collect artifact
+        shell: pwsh
+        run: |
+          $dll = Get-ChildItem -Path build -Recurse -Filter main.dll |
+            Where-Object { $_.FullName -like '*scum_simple_rcon*' } |
+            Select-Object -First 1
+          if (-not $dll) { throw 'main.dll was not produced' }
+          Write-Host "artifact: $($dll.FullName)"
+          Write-Host "size: $($dll.Length) bytes"
+          Write-Host "sha256: $((Get-FileHash $dll.FullName -Algorithm SHA256).Hash.ToLower())"
+          $out = Join-Path $env:GITHUB_WORKSPACE 'dist/ue4ss/Mods/scum_simple_rcon/dlls'
+          New-Item -ItemType Directory -Force -Path $out | Out-Null
+          Copy-Item $dll.FullName $out
+          Copy-Item 'ue4ss/Mods/scum_simple_rcon/config.ini' 'dist/ue4ss/Mods/scum_simple_rcon/'
+          Copy-Item 'ue4ss/Mods/scum_simple_rcon/enabled.txt' 'dist/ue4ss/Mods/scum_simple_rcon/'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: scum_simple_rcon-ue4ss
+          path: dist/ue4ss/Mods/scum_simple_rcon
+          if-no-files-found: error
