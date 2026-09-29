@@ -53,8 +53,8 @@ jobs:
           # .gitmodules records SSH URLs, so rewrite both SSH forms to an HTTPS
           # URL carrying the token. Submodule fetches then authenticate too.
           $authed = "https://x-access-token:$($env:UE4SS_PAT)@github.com/"
-          git config --global url."$authed".insteadOf "git@github.com:"
-          git config --global url."$authed".insteadOf "ssh://git@github.com/"
+          git config --global "url.$authed.insteadOf" "git@github.com:"
+          git config --global "url.$authed.insteadOf" "ssh://git@github.com/"
           git config --global credential.helper ""
           git config --global advice.detachedHead false
 
@@ -81,10 +81,15 @@ jobs:
           git -C $src checkout --quiet FETCH_HEAD
           # The UE4SS public headers include Unreal headers from this submodule.
           # patternsleuth is not in that closure, so it is left uninitialized.
-          git -C $src submodule update --init --depth 1 deps/first/Unreal
+          # No --depth here: the recorded Unreal commit is an interior commit
+          # rather than a branch tip, and the repository is small enough that a
+          # full fetch is cheaper than risking a bare-SHA shallow fetch.
+          git -C $src submodule update --init deps/first/Unreal
 
           $header = Join-Path $src 'UE4SS/include/UE4SSRuntime.hpp'
           if (-not (Test-Path $header)) { throw "UE4SS headers missing at $header" }
+          $unreal = Join-Path $src 'deps/first/Unreal/include/Unreal/Core/CoreTypes.hpp'
+          if (-not (Test-Path $unreal)) { throw "Unreal submodule headers missing at $unreal" }
           "UE4SS_SOURCE_DIR=$src" | Add-Content -LiteralPath $env:GITHUB_ENV
 
       - name: Configure
