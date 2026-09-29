@@ -77,13 +77,21 @@ python3 ue4ss-def/generate_def.py UE4SS.dll ue4ss-def/UE4SS.def
 `.github/workflows/build-windows.yml` builds the DLL on `windows-2022` and
 uploads it as an artifact.
 
-It needs a repository secret `UE4SS_PAT`, set under
-**Settings -> Secrets and variables -> Actions**. Use a classic personal access
-token with the `repo` scope: the job checks out `npc0-hue/RE-UE4SS`, whose
-`deps/first/Unreal` submodule lives in the private `Re-UE4SS/UEPseudo`, and a
-user-scoped token reaches both while a repository-scoped deploy key cannot.
-The workflow rewrites the SSH submodule URLs to authenticated HTTPS so the
-submodule fetch uses the same token.
+The headers it needs live in two repositories: `npc0-hue/RE-UE4SS` (public) and
+its submodule `Re-UE4SS/UEPseudo` (private). Only the second one tests access,
+so the workflow probes both and names the one that fails.
+
+Set **one** of these under **Settings -> Secrets and variables -> Actions**
+(that section is separate from Dependabot secrets, and secrets do not carry
+across repositories):
+
+- `UE4SS_SSH_KEY` (preferred) - a private SSH key registered on the account that
+  can read both repositories. SSH is used for the checkout.
+- `UE4SS_PAT` - a classic personal access token with the `repo` scope. The
+  workflow rewrites the SSH submodule URLs to authenticated HTTPS.
+
+A repository-scoped deploy key is not enough on its own, because GitHub scopes
+deploy keys to a single repository and the private headers are in the other one.
 
 Required UE4SS hooks/settings:
 

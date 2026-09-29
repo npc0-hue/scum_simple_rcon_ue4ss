@@ -17,6 +17,8 @@ env:
   # c838a8ac is the build behind UE4SS.dll sha256 d0107f63e567313c...
   UE4SS_REPO: npc0-hue/RE-UE4SS
   # Private submodule holding the Unreal headers the UE4SS public headers need.
+  # npc0-hue/RE-UE4SS is public, so a token that can read it still proves
+  # nothing about private access; this repository is the real access test.
   UEPSS_REPO: Re-UE4SS/UEPseudo
   UE4SS_REF: c838a8acaade1a0f860bdf249f039e58f4e10088
 
@@ -24,46 +26,68 @@ jobs:
   build:
     runs-on: windows-2022
     env:
-      # Accept either secret name so the token only has to exist once. A classic
-      # PAT with the 'repo' scope is user-scoped, so it reaches both
-      # npc0-hue/RE-UE4SS and the private Re-UE4SS/UEPseudo submodule, which a
-      # repository-scoped deploy key cannot do in one credential.
-      UE4SS_PAT: ${{ secrets.UE4SS_PAT || secrets.UEPSS_DEPLOY_KEY }}
+      # SSH is preferred: a user-scoped key reaches both repositories, while a
+      # repository-scoped deploy key reaches only one. The PAT is kept as a
+      # fallback for the case where private-repository access comes from a token.
+      UE4SS_SSH_KEY: ${{ secrets.UE4SS_SSH_KEY || secrets.UEPSS_DEPLOY_KEY }}
+      UE4SS_PAT: ${{ secrets.UE4SS_PAT }}
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: Configure token authentication
+      - name: Select credential
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
 
-          if (-not $env:UE4SS_PAT) {
-            Write-Host '::error::no token secret is readable by this workflow'
-            Write-Host 'Checked names: UE4SS_PAT, UEPSS_DEPLOY_KEY.'
+          if ($env:UE4SS_SSH_KEY) {
+            Write-Host 'credential: SSH key'
+
+            $sshDir = Join-Path $env:RUNNER_TEMP 'ssh'
+            New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
+            $keyPath = Join-Path $sshDir 'ue4ss_key'
+            Set-Content -LiteralPath $keyPath -Value $env:UE4SS_SSH_KEY -NoNewline -Encoding ascii
+            icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+
+            $sshCmd = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $keyPath
+            $env:GIT_SSH_COMMAND = $sshCmd
+            "UE4SS_KEY_PATH=$keyPath" | Add-Content -LiteralPath $env:GITHUB_ENV
+            "UE4SS_AUTH_MODE=ssh" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+            $origin = 'git@github.com:{0}.git'
+          }
+          elseif ($env:UE4SS_PAT) {
+            Write-Host 'credential: HTTPS token'
+
+            $authed = "https://x-access-token:$($env:UE4SS_PAT)@github.com/"
+            git config --global "url.$authed.insteadOf" "git@github.com:"
+            git config --global "url.$authed.insteadOf" "ssh://git@github.com:"
+            git config --global credential.helper ""
+            "UE4SS_AUTH_MODE=https" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+            $origin = "https://x-access-token:$($env:UE4SS_PAT)@github.com/{0}.git"
+          }
+          else {
+            Write-Host '::error::no credential secret is readable by this workflow'
+            Write-Host 'Checked names: UE4SS_SSH_KEY, UEPSS_DEPLOY_KEY, UE4SS_PAT.'
             Write-Host 'Add one of them on npc0-hue/scum_simple_rcon_ue4ss under'
             Write-Host '  Settings -> Secrets and variables -> ACTIONS'
             Write-Host 'That page is separate from Dependabot secrets, and secrets are per repository,'
             Write-Host 'so a secret set on another repository is not visible here.'
-            Write-Host 'Use a classic PAT with the repo scope.'
             exit 1
           }
-          Write-Host "token length: $($env:UE4SS_PAT.Length)"
 
-          # .gitmodules records SSH URLs, so rewrite both SSH forms to an HTTPS
-          # URL carrying the token. Submodule fetches then authenticate too.
-          $authed = "https://x-access-token:$($env:UE4SS_PAT)@github.com/"
-          git config --global "url.$authed.insteadOf" "git@github.com:"
-          git config --global "url.$authed.insteadOf" "ssh://git@github.com/"
-          git config --global credential.helper ""
           git config --global advice.detachedHead false
 
           # Name the repository that is unreachable instead of failing opaquely.
           foreach ($repo in @($env:UE4SS_REPO, $env:UEPSS_REPO)) {
-            $out = (git ls-remote "https://x-access-token:$($env:UE4SS_PAT)@github.com/$repo.git" HEAD 2>&1 | Out-String)
+            $remote = $origin -f $repo
+            $out = (git ls-remote $remote HEAD 2>&1 | Out-String)
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "::error::token cannot read $repo"
-              Write-Host ($out -replace [regex]::Escape($env:UE4SS_PAT), '***')
+              Write-Host "::error::credential cannot read $repo"
+              $shown = $out
+              if ($env:UE4SS_PAT) { $shown = $shown -replace [regex]::Escape($env:UE4SS_PAT), '***' }
+              Write-Host $shown
               exit 1
             }
             Write-Host "reachable: $repo"
@@ -74,9 +98,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
+          if ($env:UE4SS_AUTH_MODE -eq 'ssh') {
+            $sshCmd = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $env:UE4SS_KEY_PATH
+            $env:GIT_SSH_COMMAND = $sshCmd
+            $origin = "git@github.com:$env:UE4SS_REPO.git"
+          }
+          else {
+            $origin = "https://x-access-token:$($env:UE4SS_PAT)@github.com/$env:UE4SS_REPO.git"
+          }
+
           $src = Join-Path $env:RUNNER_TEMP 'ue4ss'
           git init --quiet $src
-          git -C $src remote add origin "https://x-access-token:$($env:UE4SS_PAT)@github.com/$env:UE4SS_REPO.git"
+          git -C $src remote add origin $origin
           git -C $src fetch --depth 1 origin $env:UE4SS_REF
           git -C $src checkout --quiet FETCH_HEAD
           # The UE4SS public headers include Unreal headers from this submodule.
