@@ -40,13 +40,42 @@ password = use-a-real-password
 scum_simple_rcon : 1
 ```
 
-5. Start the server and check `ue4ss/UE4SS.log` for:
+5. Reduce `ue4ss/UE4SS-settings.ini` to the hooks this mod needs.
+
+UE4SS enables roughly sixteen hooks by default. On SCUM 1.3.3 those extra hooks
+take the game down with an `EXCEPTION_ACCESS_VIOLATION` the moment a player joins
+(`Match State Changed from WaitingToStart to InProgress`, then a fatal error
+about 0.2 s later). Keep only the two hooks the mod depends on:
+
+```ini
+[Hooks]
+HookProcessInternal = 0
+HookProcessLocalScriptFunction = 0
+HookInitGameState = 0
+HookLoadMap = 0
+HookCallFunctionByNameWithArguments = 1
+HookBeginPlay  = 0
+HookEndPlay  = 0
+HookLocalPlayerExec = 0
+HookAActorTick = 0
+HookEngineTick = 1
+HookGameViewportClientTick = 0
+HookUObjectProcessEvent = 0
+HookProcessConsoleExec = 0
+HookUStructLink = 0
+```
+
+`HookEngineTick` drives the game-thread command queue. `HookCallFunctionByNameWithArguments`
+captures the original function pointer the mod falls back to when
+`ProcessConsoleExec` refuses a command.
+
+6. Start the server and check `ue4ss/UE4SS.log` for:
 
 ```text
 [scum_simple_rcon] rcon: listening on 127.0.0.1:27015
 ```
 
-6. Test locally:
+7. Test locally:
 
 ```bat
 mcrcon -H 127.0.0.1 -P 27015 -p use-a-real-password rcon.status
