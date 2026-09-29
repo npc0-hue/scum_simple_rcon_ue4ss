@@ -245,6 +245,24 @@ jobs:
           if (-not (Test-Path $unreal)) { throw "Unreal submodule headers missing at $unreal" }
           "UE4SS_SOURCE_DIR=$src" | Add-Content -LiteralPath $env:GITHUB_ENV
 
+      - name: Relax Unreal's C4582/C4583 escalation
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          # Unreal's WindowsPlatformCompilerSetup.hpp turns MSVC's C4582/C4583
+          # into errors, and the anonymous unions in fmt tripped both while the
+          # build compiled through Unreal's own headers. The pragma there runs
+          # after the command line, so the escalation itself has to go:
+          # ci/patch_ue_warning_policy.py carries the details.
+          $python = Get-Command python -ErrorAction SilentlyContinue
+          if (-not $python) { $python = Get-Command py -ErrorAction SilentlyContinue }
+          if (-not $python) { throw 'python is required to patch the Unreal header' }
+
+          $setup = Join-Path $env:UE4SS_SOURCE_DIR 'deps/first/Unreal/include/Unreal/Core/Windows/WindowsPlatformCompilerSetup.hpp'
+          & $python.Source 'ci/patch_ue_warning_policy.py' $setup
+          if ($LASTEXITCODE -ne 0) { throw "Unreal warning policy patch failed with exit code $LASTEXITCODE" }
+
       - name: Fetch the UE4SS third-party headers
         shell: pwsh
         run: |
@@ -287,23 +305,6 @@ jobs:
           }
 
           "UE4SS_EXTRA_INCLUDE_DIRS=$($includes -join ';')" | Add-Content -LiteralPath $env:GITHUB_ENV
-
-      - name: Guard fmt against Unreal's warning policy
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-
-          # Unreal's WindowsPlatformCompilerSetup.hpp raises C4582 and C4583 to
-          # errors and fmt's detail::get_locale holds a std::locale in an
-          # anonymous union, so the guard has to go into the fmt header itself.
-          # ci/patch_fmt_ue_warnings.py explains why a /wd flag cannot do it.
-          $python = Get-Command python -ErrorAction SilentlyContinue
-          if (-not $python) { $python = Get-Command py -ErrorAction SilentlyContinue }
-          if (-not $python) { throw 'python is required to patch the fmt header' }
-
-          $chrono = Join-Path $env:RUNNER_TEMP 'thirdparty/fmt/include/fmt/chrono.h'
-          & $python.Source 'ci/patch_fmt_ue_warnings.py' $chrono
-          if ($LASTEXITCODE -ne 0) { throw "fmt warning guard failed with exit code $LASTEXITCODE" }
 
       - name: Configure
         shell: pwsh
