@@ -198,6 +198,13 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $clearHeader = 'http.https://github.com/.extraheader='
 
+          # Redacted: shows whether the credential selection step's URL rewrite
+          # actually landed, which is the difference between an authenticated and
+          # an anonymous fetch.
+          $rewrites = (git config --global --get-regexp '^url\.' 2>&1 | Out-String).Trim()
+          if ($env:UE4SS_PAT) { $rewrites = $rewrites -replace [regex]::Escape($env:UE4SS_PAT), '***' }
+          Write-Host "::warning::global url rewrites: $rewrites"
+
           if ($env:UE4SS_AUTH_MODE -eq 'ssh') {
             $env:GIT_SSH_COMMAND = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $env:UE4SS_KEY_PATH
             $origin = "git@github.com:$env:UE4SS_REPO.git"
@@ -217,6 +224,17 @@ jobs:
           # No --depth here: the recorded Unreal commit is an interior commit
           # rather than a branch tip, and the repository is small enough that a
           # full fetch is cheaper than risking a bare-SHA shallow fetch.
+          #
+          # .gitmodules points this submodule at git@github.com:, and the runner's
+          # git does not apply url.*.insteadOf rewrites to submodule clones, so the
+          # configured credential is written into the submodule URL directly here.
+          if ($env:UE4SS_AUTH_MODE -eq 'ssh') {
+            $subUrl = "git@github.com:$($env:UEPSS_REPO).git"
+          }
+          else {
+            $subUrl = "https://x-access-token:$($env:UE4SS_PAT)@github.com/$($env:UEPSS_REPO).git"
+          }
+          git -c $clearHeader -C $src config "submodule.deps/first/Unreal.url" $subUrl
           git -c $clearHeader -C $src submodule update --init deps/first/Unreal
           if ($LASTEXITCODE -ne 0) { Write-Host "::error::submodule update failed for deps/first/Unreal in $($env:UEPSS_REPO)"; exit 1 }
 
