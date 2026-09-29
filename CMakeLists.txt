@@ -72,7 +72,12 @@ if(UE4SS_DEF_FILE)
     add_custom_command(
         OUTPUT "${UE4SS_IMPORT_LIB}"
         COMMAND ${CMAKE_COMMAND} -E make_directory "${CMAKE_BINARY_DIR}/ue4ss-import"
-        COMMAND "${CMAKE_AR}" /nologo /machine:x64 /def:"${UE4SS_DEF_FILE}" /out:"${UE4SS_IMPORT_LIB}"
+        # Do not wrap the values in quotes here: CMake already escapes the
+        # argument for the shell, and embedded quotes reach LINK verbatim,
+        # which then fails with LNK1104 on a path that looks quoted.
+        COMMAND "${CMAKE_AR}" /nologo /machine:x64
+                "/def:${UE4SS_DEF_FILE}"
+                "/out:${UE4SS_IMPORT_LIB}"
         DEPENDS "${UE4SS_DEF_FILE}"
         VERBATIM)
     add_custom_target(ue4ss_import_library DEPENDS "${UE4SS_IMPORT_LIB}")
