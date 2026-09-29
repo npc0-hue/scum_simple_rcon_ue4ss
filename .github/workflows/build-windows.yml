@@ -24,10 +24,11 @@ jobs:
   build:
     runs-on: windows-2022
     env:
-      # Classic PAT with the 'repo' scope. A user-scoped token reaches both
+      # Accept either secret name so the token only has to exist once. A classic
+      # PAT with the 'repo' scope is user-scoped, so it reaches both
       # npc0-hue/RE-UE4SS and the private Re-UE4SS/UEPseudo submodule, which a
-      # repo-scoped deploy key cannot do in one credential.
-      UE4SS_PAT: ${{ secrets.UE4SS_PAT }}
+      # repository-scoped deploy key cannot do in one credential.
+      UE4SS_PAT: ${{ secrets.UE4SS_PAT || secrets.UEPSS_DEPLOY_KEY }}
 
     steps:
       - uses: actions/checkout@v4
@@ -38,12 +39,16 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           if (-not $env:UE4SS_PAT) {
-            Write-Host '::error::secret UE4SS_PAT is empty for this repository'
-            Write-Host 'Set it on npc0-hue/scum_simple_rcon_ue4ss under Settings -> Secrets and variables -> ACTIONS (not Dependabot secrets).'
+            Write-Host '::error::no token secret is readable by this workflow'
+            Write-Host 'Checked names: UE4SS_PAT, UEPSS_DEPLOY_KEY.'
+            Write-Host 'Add one of them on npc0-hue/scum_simple_rcon_ue4ss under'
+            Write-Host '  Settings -> Secrets and variables -> ACTIONS'
+            Write-Host 'That page is separate from Dependabot secrets, and secrets are per repository,'
+            Write-Host 'so a secret set on another repository is not visible here.'
             Write-Host 'Use a classic PAT with the repo scope.'
             exit 1
           }
-          Write-Host "UE4SS_PAT length: $($env:UE4SS_PAT.Length)"
+          Write-Host "token length: $($env:UE4SS_PAT.Length)"
 
           # .gitmodules records SSH URLs, so rewrite both SSH forms to an HTTPS
           # URL carrying the token. Submodule fetches then authenticate too.
