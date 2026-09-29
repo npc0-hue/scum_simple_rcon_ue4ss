@@ -75,9 +75,15 @@ python3 ue4ss-def/generate_def.py UE4SS.dll ue4ss-def/UE4SS.def
 ## Continuous integration
 
 `.github/workflows/build-windows.yml` builds the DLL on `windows-2022` and
-uploads it as an artifact. It needs a repository secret `UEPSS_DEPLOY_KEY`
-holding an SSH deploy key that can read `npc0-hue/RE-UE4SS` and
-`Re-UE4SS/UEPseudo`; the latter is private and only reachable over SSH.
+uploads it as an artifact.
+
+It needs a repository secret `UE4SS_PAT`, set under
+**Settings -> Secrets and variables -> Actions**. Use a classic personal access
+token with the `repo` scope: the job checks out `npc0-hue/RE-UE4SS`, whose
+`deps/first/Unreal` submodule lives in the private `Re-UE4SS/UEPseudo`, and a
+user-scoped token reaches both while a repository-scoped deploy key cannot.
+The workflow rewrites the SSH submodule URLs to authenticated HTTPS so the
+submodule fetch uses the same token.
 
 Required UE4SS hooks/settings:
 

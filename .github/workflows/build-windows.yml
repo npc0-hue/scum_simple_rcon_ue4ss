@@ -23,41 +23,42 @@ env:
 jobs:
   build:
     runs-on: windows-2022
+    env:
+      # Classic PAT with the 'repo' scope. A user-scoped token reaches both
+      # npc0-hue/RE-UE4SS and the private Re-UE4SS/UEPseudo submodule, which a
+      # repo-scoped deploy key cannot do in one credential.
+      UE4SS_PAT: ${{ secrets.UE4SS_PAT }}
+
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check deploy key access
+      - name: Configure token authentication
         shell: pwsh
-        env:
-          UE4SS_DEPLOY_KEY: ${{ secrets.UEPSS_DEPLOY_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
 
-          $len = if ($env:UE4SS_DEPLOY_KEY) { $env:UE4SS_DEPLOY_KEY.Length } else { 0 }
-          Write-Host "UEPSS_DEPLOY_KEY length: $len"
-          if ($len -eq 0) {
-            Write-Host '::error::secret UEPSS_DEPLOY_KEY is empty for this repository.'
-            Write-Host 'Set it on npc0-hue/scum_simple_rcon_ue4ss under Settings -> Secrets and variables -> ACTIONS (not Dependabot secrets),'
-            Write-Host 'with the full private key body including the BEGIN and END lines.'
+          if (-not $env:UE4SS_PAT) {
+            Write-Host '::error::secret UE4SS_PAT is empty for this repository'
+            Write-Host 'Set it on npc0-hue/scum_simple_rcon_ue4ss under Settings -> Secrets and variables -> ACTIONS (not Dependabot secrets).'
+            Write-Host 'Use a classic PAT with the repo scope.'
             exit 1
           }
+          Write-Host "UE4SS_PAT length: $($env:UE4SS_PAT.Length)"
 
-          $sshDir = Join-Path $env:RUNNER_TEMP 'ssh'
-          New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
-          $keyPath = Join-Path $sshDir 'ue4ss_deploy_key'
-          Set-Content -LiteralPath $keyPath -Value $env:UE4SS_DEPLOY_KEY -NoNewline -Encoding ascii
-          icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
-
-          $sshCmd = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $keyPath
-          $env:GIT_SSH_COMMAND = $sshCmd
-          "UE4SS_KEY_PATH=$keyPath" | Add-Content -LiteralPath $env:GITHUB_ENV
+          # .gitmodules records SSH URLs, so rewrite both SSH forms to an HTTPS
+          # URL carrying the token. Submodule fetches then authenticate too.
+          $authed = "https://x-access-token:$($env:UE4SS_PAT)@github.com/"
+          git config --global url."$authed".insteadOf "git@github.com:"
+          git config --global url."$authed".insteadOf "ssh://git@github.com/"
+          git config --global credential.helper ""
+          git config --global advice.detachedHead false
 
           # Name the repository that is unreachable instead of failing opaquely.
           foreach ($repo in @($env:UE4SS_REPO, $env:UEPSS_REPO)) {
-            $out = (git ls-remote "git@github.com:$repo.git" HEAD 2>&1 | Out-String).Trim()
+            $out = (git ls-remote "https://x-access-token:$($env:UE4SS_PAT)@github.com/$repo.git" HEAD 2>&1 | Out-String)
             if ($LASTEXITCODE -ne 0) {
-              Write-Host "::error::deploy key cannot read $repo"
-              Write-Host $out
+              Write-Host "::error::token cannot read $repo"
+              Write-Host ($out -replace [regex]::Escape($env:UE4SS_PAT), '***')
               exit 1
             }
             Write-Host "reachable: $repo"
@@ -67,12 +68,10 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
-          $sshCmd = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $env:UE4SS_KEY_PATH
-          $env:GIT_SSH_COMMAND = $sshCmd
 
           $src = Join-Path $env:RUNNER_TEMP 'ue4ss'
           git init --quiet $src
-          git -C $src remote add origin "git@github.com:$env:UE4SS_REPO.git"
+          git -C $src remote add origin "https://x-access-token:$($env:UE4SS_PAT)@github.com/$env:UE4SS_REPO.git"
           git -C $src fetch --depth 1 origin $env:UE4SS_REF
           git -C $src checkout --quiet FETCH_HEAD
           # The UE4SS public headers include Unreal headers from this submodule.
