@@ -17,8 +17,8 @@ env:
   # c838a8ac is the build behind UE4SS.dll sha256 d0107f63e567313c...
   UE4SS_REPO: npc0-hue/RE-UE4SS
   # Private submodule holding the Unreal headers the UE4SS public headers need.
-  # npc0-hue/RE-UE4SS is public, so a token that can read it still proves
-  # nothing about private access; this repository is the real access test.
+  # npc0-hue/RE-UE4SS is public, so reading it probes nothing; only this
+  # private repository proves the credential grants the access the build needs.
   UEPSS_REPO: Re-UE4SS/UEPseudo
   UE4SS_REF: c838a8acaade1a0f860bdf249f039e58f4e10088
 
@@ -26,9 +26,9 @@ jobs:
   build:
     runs-on: windows-2022
     env:
-      # SSH is preferred: a user-scoped key reaches both repositories, while a
-      # repository-scoped deploy key reaches only one. The PAT is kept as a
-      # fallback for the case where private-repository access comes from a token.
+      # A user-scoped credential is required: the private headers are in a
+      # different repository than npc0-hue/RE-UE4SS, so a repository-scoped
+      # deploy key cannot reach them.
       UE4SS_SSH_KEY: ${{ secrets.UE4SS_SSH_KEY || secrets.UEPSS_DEPLOY_KEY }}
       UE4SS_PAT: ${{ secrets.UE4SS_PAT }}
 
@@ -40,41 +40,66 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          # Report findings as annotations: they are readable through the Checks
-          # API by anyone who can read the repository, unlike the job log.
           function Test-Remote([string]$Remote) {
             $null = (git ls-remote $Remote HEAD 2>&1 | Out-String)
             return ($LASTEXITCODE -eq 0)
           }
 
           $sshReady = $false
-          $sshTip = @()
           if ($env:UE4SS_SSH_KEY) {
             $sshDir = Join-Path $env:RUNNER_TEMP 'ssh'
             New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
             $keyPath = Join-Path $sshDir 'ue4ss_key'
-            Set-Content -LiteralPath $keyPath -Value $env:UE4SS_SSH_KEY -NoNewline -Encoding ascii
+
+            # A key pasted through the web UI can arrive with CRLF line endings,
+            # which OpenSSH rejects as "invalid format". Normalise the line
+            # endings and make sure the blob ends with a newline before writing.
+            $raw = $env:UE4SS_SSH_KEY
+            $hasBegin = $raw.Contains('BEGIN OPENSSH PRIVATE KEY')
+            $hasEnd = $raw.Contains('END OPENSSH PRIVATE KEY')
+            $keyText = ($raw -replace "`r`n", "`n") -replace "`r", "`n"
+            $keyText = $keyText.Trim() + "`n"
+            if ($keyText.Contains("`n`n`n")) {
+              Write-Host '::warning::ssh key contains blank lines; it may not have been copied verbatim'
+            }
+
+            [IO.File]::WriteAllText($keyPath, $keyText, (New-Object Text.UTF8Encoding($false)))
             icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
 
-            $sshCmd = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $keyPath
-            $env:GIT_SSH_COMMAND = $sshCmd
+            Write-Host "::warning::ssh secret: begin=$hasBegin end=$hasEnd chars=$($raw.Length)"
+
+            # Validate the key before relying on it, so a malformed secret is
+            # reported as malformed instead of surfacing as an auth failure.
+            $derived = (ssh-keygen -y -f $keyPath 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::UE4SS_SSH_KEY does not hold a usable OpenSSH private key"
+              Write-Host "::error::ssh-keygen said: $derived"
+              Write-Host '::error::Paste the file exactly as-is, including the BEGIN and END lines, with no surrounding quotes.'
+              exit 1
+            }
+            $fp = (ssh-keygen -lf $keyPath 2>&1 | Out-String).Trim()
+            Write-Host "::warning::ssh key fingerprint: $fp"
+            Write-Host "::warning::confirm this fingerprint is listed on the account you registered the key on"
+
+            $env:GIT_SSH_COMMAND = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $keyPath
             "UE4SS_KEY_PATH=$keyPath" | Add-Content -LiteralPath $env:GITHUB_ENV
 
-            # ssh -T exits non-zero even on success, so only read the greeting.
+            # ssh -T reports success through the greeting but exits non-zero,
+            # so only the text matters here.
             $greeting = (ssh -i $keyPath -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | Out-String).Trim()
+            Write-Host "::warning::ssh identity: $greeting"
+
             $sshRepo = Test-Remote "git@github.com:$env:UE4SS_REPO.git"
             $uepRepo = Test-Remote "git@github.com:$env:UEPSS_REPO.git"
             $sshReady = $sshRepo -and $uepRepo
-            $sshTip = @("ssh identity: $greeting", "ssh reads $($env:UE4SS_REPO): $sshRepo", "ssh reads $($env:UEPSS_REPO): $uepRepo")
-            foreach ($line in $sshTip) { Write-Host "::warning::$line" }
+            Write-Host "::warning::ssh reads $($env:UE4SS_REPO): $sshRepo"
+            Write-Host "::warning::ssh reads $($env:UEPSS_REPO): $uepRepo"
           }
           else {
-            $sshTip = @('ssh: no secret set (UE4SS_SSH_KEY)')
-            Write-Host "::warning::ssh: no secret set (UE4SS_SSH_KEY)"
+            Write-Host '::warning::ssh: no secret named UE4SS_SSH_KEY'
           }
 
           $httpsReady = $false
-          $httpsTip = @()
           if ($env:UE4SS_PAT) {
             $headers = @{ Authorization = "Bearer $($env:UE4SS_PAT)"; 'User-Agent' = 'scum-simple-rcon-ci' }
             try {
@@ -84,26 +109,27 @@ jobs:
               if (-not $scopes) { $scopes = '(none reported)' }
             }
             catch {
-              $login = "(lookup failed)"
+              $login = '(lookup failed)'
               $scopes = $_.Exception.Message
             }
 
-            $authed = "https://x-access-token:$($env:UE4SS_PAT)@github.com/"
             $htRepo = Test-Remote "https://x-access-token:$($env:UE4SS_PAT)@github.com/$env:UE4SS_REPO.git"
             $hueRepo = Test-Remote "https://x-access-token:$($env:UE4SS_PAT)@github.com/$env:UEPSS_REPO.git"
             $httpsReady = $htRepo -and $hueRepo
-            $httpsTip = @("token belongs to: $login", "token scopes: $scopes", "token reads $($env:UE4SS_REPO): $htRepo", "token reads $($env:UEPSS_REPO): $hueRepo")
-            foreach ($line in $httpsTip) { Write-Host "::warning::$line" }
+            Write-Host "::warning::token belongs to: $login"
+            Write-Host "::warning::token scopes: $scopes"
+            Write-Host "::warning::token reads $($env:UE4SS_REPO): $htRepo"
+            Write-Host "::warning::token reads $($env:UEPSS_REPO): $hueRepo"
 
             if ($httpsReady) {
+              $authed = "https://x-access-token:$($env:UE4SS_PAT)@github.com/"
               git config --global "url.$authed.insteadOf" "git@github.com:"
               git config --global "url.$authed.insteadOf" "ssh://git@github.com:"
               git config --global credential.helper ""
             }
           }
           else {
-            $httpsTip = @('token: no secret set (UE4SS_PAT)')
-            Write-Host "::warning::token: no secret set (UE4SS_PAT)"
+            Write-Host '::warning::token: no secret named UE4SS_PAT'
           }
 
           git config --global advice.detachedHead false
@@ -118,8 +144,8 @@ jobs:
           }
           else {
             Write-Host '::error::no credential can read both repositories'
-            Write-Host "::error::$($env:UEPSS_REPO) is private and is the real access test; $($env:UE4SS_REPO) is public, so reading it proves nothing."
-            Write-Host '::error::Add UE4SS_SSH_KEY (private key registered on the account that can read both) under Settings -> Secrets and variables -> Actions.'
+            Write-Host "::error::$($env:UEPSS_REPO) is private and is the real access test."
+            Write-Host '::error::The credential must be owned by an account that can read it. A token that reads only the public fork cannot build this mod.'
             exit 1
           }
 
@@ -129,8 +155,7 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           if ($env:UE4SS_AUTH_MODE -eq 'ssh') {
-            $sshCmd = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $env:UE4SS_KEY_PATH
-            $env:GIT_SSH_COMMAND = $sshCmd
+            $env:GIT_SSH_COMMAND = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $env:UE4SS_KEY_PATH
             $origin = "git@github.com:$env:UE4SS_REPO.git"
           }
           else {
