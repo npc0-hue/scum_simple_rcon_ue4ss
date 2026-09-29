@@ -26,6 +26,10 @@ target_compile_definitions(${TARGET} PRIVATE
     # instrumentation this mod does not use, and they pull in Tracy.
     UE_GAME
     UE_BUILD_DEVELOPMENT
+    _UNICODE
+    UNICODE
+    _WIN32_WINNT=0x0A00
+    WINVER=0x0A00
     PLATFORM_WINDOWS
     PLATFORM_MICROSOFT
     OVERRIDE_PLATFORM_HEADER_NAME=Windows
@@ -33,7 +37,9 @@ target_compile_definitions(${TARGET} PRIVATE
 )
 
 if(MSVC)
-    target_compile_options(${TARGET} PRIVATE /permissive- /EHsc /bigobj)
+    # /utf-8 is required by fmt, which the UE4SS headers pull in through
+    # DynamicOutput; it refuses to compile without it.
+    target_compile_options(${TARGET} PRIVATE /permissive- /EHsc /bigobj /utf-8)
 endif()
 
 # The mod only needs UE4SS's public headers. Every UE4SS symbol it uses is
@@ -61,7 +67,13 @@ file(GLOB UE4SS_GENERATED_INCLUDE_DIRS
     "${UE4SS_SOURCE_DIR}/UE4SS/generated_include"
     "${UE4SS_SOURCE_DIR}/deps/first/*/generated_include")
 file(GLOB UE4SS_DEP_INCLUDE_DIRS "${UE4SS_SOURCE_DIR}/deps/first/*/include")
-foreach(ue4ss_include_dir IN LISTS UE4SS_GENERATED_INCLUDE_DIRS UE4SS_DEP_INCLUDE_DIRS)
+# Packages such as Unreal also expose their own namespace directory and a Core
+# subdirectory as include roots, because their headers include each other as
+# <GenericPlatform/GenericPlatform.hpp> rather than by full path.
+file(GLOB UE4SS_NESTED_INCLUDE_DIRS
+    "${UE4SS_SOURCE_DIR}/deps/first/*/include/*"
+    "${UE4SS_SOURCE_DIR}/deps/first/*/include/*/Core")
+foreach(ue4ss_include_dir IN LISTS UE4SS_GENERATED_INCLUDE_DIRS UE4SS_DEP_INCLUDE_DIRS UE4SS_NESTED_INCLUDE_DIRS)
     if(IS_DIRECTORY "${ue4ss_include_dir}")
         list(APPEND UE4SS_INCLUDE_DIRS "${ue4ss_include_dir}")
     endif()
