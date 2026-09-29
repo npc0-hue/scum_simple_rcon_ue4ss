@@ -26,6 +26,12 @@ target_compile_definitions(${TARGET} PRIVATE
     # instrumentation this mod does not use, and they pull in Tracy.
     UE_GAME
     UE_BUILD_DEVELOPMENT
+    # The UE4SS public headers reach fmt through DynamicOutput, but UE4SS.dll
+    # does not export fmt's compiled symbols (its 4106 exports contain no fmt
+    # entry), so a mod that links against the import library has to carry fmt's
+    # implementation itself. fmt/format.h pulls in format-inl.h under this
+    # definition, which turns every FMT_FUNC into an inline definition.
+    FMT_HEADER_ONLY
     _UNICODE
     UNICODE
     _WIN32_WINNT=0x0A00
