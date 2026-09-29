@@ -25,6 +25,12 @@ network channel.
 5. The game thread checks `AdminUsers.ini`, discovers SCUM `AdminCommand` classes, and creates/reuses a synthetic server-only caller.
 6. The mod resolves SCUM's native AdminCommand executor with one exact signature. It only calls the executor when exactly one match is found; otherwise it returns a clear error. Non-AdminCommand Unreal console commands use the server-console fallback.
 
+`rcon.status` reports whether the game-thread consumer is actually alive, so a
+broken drain is distinguishable from a failing command. A healthy result is
+`ok; game-thread queue active; drains=<n>` with a rising counter. If the
+EngineTick hook is missing, or is installed but has never fired, it returns
+`DEGRADED` with the reason instead of failing every later command as a timeout.
+
 Normal server admin commands can therefore run while the player count is **zero**. `SendChat` is not an admin command in this mod: it does not need `AdminUsers.ini`, but it does require each recipient to be online with a real network-backed controller. A player-targeted notification likewise needs its recipient online in order to be delivered/displayed; neither feature requires the administrator to be online.
 
 ## Example commands

@@ -1,24 +1,23 @@
 # Build
 
-UE4SS C++ mods need to be built with the same UE4SS source/ABI line as the runtime you deploy with. Build this beside a working RE-UE4SS checkout.
+UE4SS C++ mods need to be built with the same UE4SS source/ABI line as the runtime you deploy with.
+
+This project compiles against UE4SS's **public headers only**. Every UE4SS symbol it uses is imported from `UE4SS.dll` at load time, so the UE4SS project itself — including its Rust dependencies — is never built. You only need a RE-UE4SS checkout for its `UE4SS/include` and `deps/first/*/include` trees.
 
 ## Folder layout
 
+Either keep a sibling checkout:
+
 ```text
 MyMods/
-  CMakeLists.txt
   RE-UE4SS/
   scum_simple_rcon_ue4ss/
 ```
 
-`MyMods/CMakeLists.txt`:
+or point the build at a checkout anywhere on disk:
 
-```cmake
-cmake_minimum_required(VERSION 3.22)
-project(MyMods)
-
-add_subdirectory(RE-UE4SS)
-add_subdirectory(scum_simple_rcon_ue4ss)
+```sh
+cmake -B build -DUE4SS_SOURCE_DIR=/path/to/RE-UE4SS
 ```
 
 ## Configure and build
@@ -46,7 +45,8 @@ build/package/ue4ss/Mods/scum_simple_rcon/
   dlls/main.dll
 ```
 
-If your UE4SS source checkout cannot initialize `deps/first/Unreal`, link your GitHub account to Epic Games and rerun:
+The header closure also reads `deps/first/Unreal`, which RE-UE4SS tracks as a
+submodule. If your checkout is missing it, initialize it first:
 
 ```bat
 git submodule update --init --recursive

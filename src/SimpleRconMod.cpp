@@ -180,11 +180,16 @@ namespace simple_rcon
             return;
         }
 
+        // FCallbackOptions is {bOnce, bReadonly, OwnerModName, HookName}.
+        // bOnce must stay false: this callback has to run on every engine tick.
+        // bOnce=true lets UE4SS claim the callback on its first invocation and
+        // the garbage collector prunes it, which silently strands every queued
+        // RCON command with no game-thread consumer left to drain it.
         m_tick_callback_id = RC::Unreal::Hook::RegisterEngineTickPreCallback(
             [this](auto&, RC::Unreal::UEngine*, float, bool) {
                 drain_game_thread();
             },
-            {true, true, STR("scum_simple_rcon"), STR("DrainCommands")});
+            {false, true, STR("scum_simple_rcon"), STR("DrainCommands")});
 
         m_hook_installed = m_tick_callback_id != 0;
         log(m_hook_installed ? "game-thread drain installed via EngineTick" : "game-thread drain install failed");
@@ -192,6 +197,7 @@ namespace simple_rcon
 
     void SimpleRconMod::drain_game_thread()
     {
+        m_drain_calls.fetch_add(1, std::memory_order_relaxed);
         m_queue.drain(32);
     }
 
@@ -205,7 +211,16 @@ namespace simple_rcon
 
         if (cmd == "rcon.status")
         {
-            return "scum_simple_rcon: ok; game-thread queue active";
+            const auto drains = m_drain_calls.load(std::memory_order_relaxed);
+            if (!m_hook_installed)
+            {
+                return "scum_simple_rcon: DEGRADED; no EngineTick hook; drain runs on the UE4SS update thread";
+            }
+            if (drains == 0)
+            {
+                return "scum_simple_rcon: DEGRADED; EngineTick hook installed but has never fired; queued commands will time out";
+            }
+            return "scum_simple_rcon: ok; game-thread queue active; drains=" + std::to_string(drains);
         }
         if (cmd == "rcon.help")
         {

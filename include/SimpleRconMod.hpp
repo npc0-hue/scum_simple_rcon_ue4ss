@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <memory>
 #include <string>
 
@@ -33,5 +34,8 @@ namespace simple_rcon
         std::unique_ptr<RconServer> m_server;
         bool m_hook_installed{false};
         uint64_t m_tick_callback_id{0};
+        // Counts game-thread drains so a missing consumer is reportable
+        // instead of only surfacing as a command timeout.
+        std::atomic<uint64_t> m_drain_calls{0};
     };
 }

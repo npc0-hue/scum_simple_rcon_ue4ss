@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.22)
+cmake_minimum_required(VERSION 3.20)
 
 set(TARGET scum_simple_rcon)
 project(${TARGET} LANGUAGES CXX)
@@ -26,13 +26,34 @@ if(MSVC)
     target_compile_options(${TARGET} PRIVATE /permissive- /EHsc /bigobj)
 endif()
 
-if(NOT TARGET UE4SS)
-    message(FATAL_ERROR
-        "UE4SS target not found. Build this as a sibling project next to RE-UE4SS, "
-        "or add_subdirectory(RE-UE4SS) before add_subdirectory(scum_simple_rcon_ue4ss).")
+# The mod only needs UE4SS's public headers. Every UE4SS symbol it uses is
+# imported from UE4SS.dll at load time, so building the UE4SS project itself
+# (and its Rust dependencies) is not required. Pass -DUE4SS_SOURCE_DIR=/path/to/RE-UE4SS.
+if(NOT DEFINED UE4SS_SOURCE_DIR)
+    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/../RE-UE4SS/UE4SS/include/UE4SSRuntime.hpp")
+        set(UE4SS_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../RE-UE4SS")
+    else()
+        message(FATAL_ERROR
+            "UE4SS headers not found. Pass -DUE4SS_SOURCE_DIR=/path/to/RE-UE4SS, "
+            "or place this project next to a RE-UE4SS checkout.")
+    endif()
 endif()
 
-target_link_libraries(${TARGET} PUBLIC UE4SS)
+if(NOT EXISTS "${UE4SS_SOURCE_DIR}/UE4SS/include/UE4SSRuntime.hpp")
+    message(FATAL_ERROR "UE4SS_SOURCE_DIR does not look like a RE-UE4SS checkout: ${UE4SS_SOURCE_DIR}")
+endif()
+
+# UE4SS public headers include each other across UE4SS/include and several
+# deps/first/*/include roots, so add every one that exists.
+file(GLOB UE4SS_INCLUDE_DIRS "${UE4SS_SOURCE_DIR}/UE4SS/include")
+file(GLOB UE4SS_DEP_INCLUDE_DIRS "${UE4SS_SOURCE_DIR}/deps/first/*/include")
+foreach(ue4ss_include_dir IN LISTS UE4SS_DEP_INCLUDE_DIRS)
+    if(IS_DIRECTORY "${ue4ss_include_dir}")
+        list(APPEND UE4SS_INCLUDE_DIRS "${ue4ss_include_dir}")
+    endif()
+endforeach()
+
+target_include_directories(${TARGET} PRIVATE ${UE4SS_INCLUDE_DIRS})
 target_link_libraries(${TARGET} PRIVATE ws2_32)
 
 set_target_properties(${TARGET} PROPERTIES
