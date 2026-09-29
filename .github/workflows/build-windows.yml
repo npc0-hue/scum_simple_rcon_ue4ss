@@ -40,9 +40,16 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
-          if ($env:UE4SS_SSH_KEY) {
-            Write-Host 'credential: SSH key'
+          # Report findings as annotations: they are readable through the Checks
+          # API by anyone who can read the repository, unlike the job log.
+          function Test-Remote([string]$Remote) {
+            $null = (git ls-remote $Remote HEAD 2>&1 | Out-String)
+            return ($LASTEXITCODE -eq 0)
+          }
 
+          $sshReady = $false
+          $sshTip = @()
+          if ($env:UE4SS_SSH_KEY) {
             $sshDir = Join-Path $env:RUNNER_TEMP 'ssh'
             New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
             $keyPath = Join-Path $sshDir 'ue4ss_key'
@@ -52,45 +59,68 @@ jobs:
             $sshCmd = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $keyPath
             $env:GIT_SSH_COMMAND = $sshCmd
             "UE4SS_KEY_PATH=$keyPath" | Add-Content -LiteralPath $env:GITHUB_ENV
-            "UE4SS_AUTH_MODE=ssh" | Add-Content -LiteralPath $env:GITHUB_ENV
 
-            $origin = 'git@github.com:{0}.git'
-          }
-          elseif ($env:UE4SS_PAT) {
-            Write-Host 'credential: HTTPS token'
-
-            $authed = "https://x-access-token:$($env:UE4SS_PAT)@github.com/"
-            git config --global "url.$authed.insteadOf" "git@github.com:"
-            git config --global "url.$authed.insteadOf" "ssh://git@github.com:"
-            git config --global credential.helper ""
-            "UE4SS_AUTH_MODE=https" | Add-Content -LiteralPath $env:GITHUB_ENV
-
-            $origin = "https://x-access-token:$($env:UE4SS_PAT)@github.com/{0}.git"
+            # ssh -T exits non-zero even on success, so only read the greeting.
+            $greeting = (ssh -i $keyPath -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | Out-String).Trim()
+            $sshRepo = Test-Remote "git@github.com:$env:UE4SS_REPO.git"
+            $uepRepo = Test-Remote "git@github.com:$env:UEPSS_REPO.git"
+            $sshReady = $sshRepo -and $uepRepo
+            $sshTip = @("ssh identity: $greeting", "ssh reads $($env:UE4SS_REPO): $sshRepo", "ssh reads $($env:UEPSS_REPO): $uepRepo")
+            foreach ($line in $sshTip) { Write-Host "::warning::$line" }
           }
           else {
-            Write-Host '::error::no credential secret is readable by this workflow'
-            Write-Host 'Checked names: UE4SS_SSH_KEY, UEPSS_DEPLOY_KEY, UE4SS_PAT.'
-            Write-Host 'Add one of them on npc0-hue/scum_simple_rcon_ue4ss under'
-            Write-Host '  Settings -> Secrets and variables -> ACTIONS'
-            Write-Host 'That page is separate from Dependabot secrets, and secrets are per repository,'
-            Write-Host 'so a secret set on another repository is not visible here.'
-            exit 1
+            $sshTip = @('ssh: no secret set (UE4SS_SSH_KEY)')
+            Write-Host "::warning::ssh: no secret set (UE4SS_SSH_KEY)"
+          }
+
+          $httpsReady = $false
+          $httpsTip = @()
+          if ($env:UE4SS_PAT) {
+            $headers = @{ Authorization = "Bearer $($env:UE4SS_PAT)"; 'User-Agent' = 'scum-simple-rcon-ci' }
+            try {
+              $resp = Invoke-WebRequest -Uri 'https://api.github.com/user' -Headers $headers
+              $login = ($resp.Content | ConvertFrom-Json).login
+              $scopes = ($resp.Headers['x-oauth-scopes'] -join ',')
+              if (-not $scopes) { $scopes = '(none reported)' }
+            }
+            catch {
+              $login = "(lookup failed)"
+              $scopes = $_.Exception.Message
+            }
+
+            $authed = "https://x-access-token:$($env:UE4SS_PAT)@github.com/"
+            $htRepo = Test-Remote "https://x-access-token:$($env:UE4SS_PAT)@github.com/$env:UE4SS_REPO.git"
+            $hueRepo = Test-Remote "https://x-access-token:$($env:UE4SS_PAT)@github.com/$env:UEPSS_REPO.git"
+            $httpsReady = $htRepo -and $hueRepo
+            $httpsTip = @("token belongs to: $login", "token scopes: $scopes", "token reads $($env:UE4SS_REPO): $htRepo", "token reads $($env:UEPSS_REPO): $hueRepo")
+            foreach ($line in $httpsTip) { Write-Host "::warning::$line" }
+
+            if ($httpsReady) {
+              git config --global "url.$authed.insteadOf" "git@github.com:"
+              git config --global "url.$authed.insteadOf" "ssh://git@github.com:"
+              git config --global credential.helper ""
+            }
+          }
+          else {
+            $httpsTip = @('token: no secret set (UE4SS_PAT)')
+            Write-Host "::warning::token: no secret set (UE4SS_PAT)"
           }
 
           git config --global advice.detachedHead false
 
-          # Name the repository that is unreachable instead of failing opaquely.
-          foreach ($repo in @($env:UE4SS_REPO, $env:UEPSS_REPO)) {
-            $remote = $origin -f $repo
-            $out = (git ls-remote $remote HEAD 2>&1 | Out-String)
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "::error::credential cannot read $repo"
-              $shown = $out
-              if ($env:UE4SS_PAT) { $shown = $shown -replace [regex]::Escape($env:UE4SS_PAT), '***' }
-              Write-Host $shown
-              exit 1
-            }
-            Write-Host "reachable: $repo"
+          if ($sshReady) {
+            "UE4SS_AUTH_MODE=ssh" | Add-Content -LiteralPath $env:GITHUB_ENV
+            Write-Host 'credential selected: SSH key'
+          }
+          elseif ($httpsReady) {
+            "UE4SS_AUTH_MODE=https" | Add-Content -LiteralPath $env:GITHUB_ENV
+            Write-Host 'credential selected: HTTPS token'
+          }
+          else {
+            Write-Host '::error::no credential can read both repositories'
+            Write-Host "::error::$($env:UEPSS_REPO) is private and is the real access test; $($env:UE4SS_REPO) is public, so reading it proves nothing."
+            Write-Host '::error::Add UE4SS_SSH_KEY (private key registered on the account that can read both) under Settings -> Secrets and variables -> Actions.'
+            exit 1
           }
 
       - name: Check out UE4SS headers
