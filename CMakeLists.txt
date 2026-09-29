@@ -39,7 +39,12 @@ target_compile_definitions(${TARGET} PRIVATE
 if(MSVC)
     # /utf-8 is required by fmt, which the UE4SS headers pull in through
     # DynamicOutput; it refuses to compile without it.
-    target_compile_options(${TARGET} PRIVATE /permissive- /EHsc /bigobj /utf-8)
+    #
+    # /permissive- is deliberately not set. fmt's chrono.h holds a std::locale
+    # in an anonymous union (detail::get_locale), which conforming mode reports
+    # as the errors C4582/C4583 instead of warnings, and RE-UE4SS itself builds
+    # these same headers without conformance mode.
+    target_compile_options(${TARGET} PRIVATE /EHsc /bigobj /utf-8)
 endif()
 
 # The mod only needs UE4SS's public headers. Every UE4SS symbol it uses is
