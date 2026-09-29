@@ -41,8 +41,18 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
 
+          # actions/checkout persists its own credential as an http extraheader in
+          # the workspace repository's local git config. Every git command started
+          # from this directory sends that header instead of the credential in the
+          # URL, so a working PAT reported Re-UE4SS/UEPseudo as "Repository not
+          # found" while the API, which is not affected by git config, saw it fine.
+          # Drop it here and pass the same override to each probe.
+          $clearHeader = 'http.https://github.com/.extraheader='
+          git config --local --unset-all $clearHeader 2>$null
+          $LASTEXITCODE = 0
+
           function Test-Remote([string]$Remote) {
-            $script:RemoteError = (git ls-remote $Remote HEAD 2>&1 | Out-String).Trim()
+            $script:RemoteError = (git -c $clearHeader ls-remote $Remote HEAD 2>&1 | Out-String).Trim()
             return ($LASTEXITCODE -eq 0)
           }
 
@@ -186,6 +196,7 @@ jobs:
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
+          $clearHeader = 'http.https://github.com/.extraheader='
 
           if ($env:UE4SS_AUTH_MODE -eq 'ssh') {
             $env:GIT_SSH_COMMAND = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $env:UE4SS_KEY_PATH
@@ -198,14 +209,16 @@ jobs:
           $src = Join-Path $env:RUNNER_TEMP 'ue4ss'
           git init --quiet $src
           git -C $src remote add origin $origin
-          git -C $src fetch --depth 1 origin $env:UE4SS_REF
-          git -C $src checkout --quiet FETCH_HEAD
+          git -c $clearHeader -C $src fetch --depth 1 origin $env:UE4SS_REF
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::fetch failed for $($env:UE4SS_REPO)@$($env:UE4SS_REF)"; exit 1 }
+          git -c $clearHeader -C $src checkout --quiet FETCH_HEAD
           # The UE4SS public headers include Unreal headers from this submodule.
           # patternsleuth is not in that closure, so it is left uninitialized.
           # No --depth here: the recorded Unreal commit is an interior commit
           # rather than a branch tip, and the repository is small enough that a
           # full fetch is cheaper than risking a bare-SHA shallow fetch.
-          git -C $src submodule update --init deps/first/Unreal
+          git -c $clearHeader -C $src submodule update --init deps/first/Unreal
+          if ($LASTEXITCODE -ne 0) { Write-Host "::error::submodule update failed for deps/first/Unreal in $($env:UEPSS_REPO)"; exit 1 }
 
           $header = Join-Path $src 'UE4SS/include/UE4SSRuntime.hpp'
           if (-not (Test-Path $header)) { throw "UE4SS headers missing at $header" }
