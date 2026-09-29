@@ -42,8 +42,24 @@ jobs:
           $ErrorActionPreference = 'Stop'
 
           function Test-Remote([string]$Remote) {
-            $null = (git ls-remote $Remote HEAD 2>&1 | Out-String)
+            $script:RemoteError = (git ls-remote $Remote HEAD 2>&1 | Out-String).Trim()
             return ($LASTEXITCODE -eq 0)
+          }
+
+          # Ask the API directly: git ls-remote hides why it failed, and a public
+          # repository succeeds even with a useless credential, so only the
+          # private one carries information.
+          function Test-Api([string]$Repo) {
+            $headers = @{ Authorization = "Bearer $($env:UE4SS_PAT)"; 'User-Agent' = 'scum-simple-rcon-ci' }
+            try {
+              $r = Invoke-WebRequest -Uri "https://api.github.com/repos/$Repo" -Headers $headers -ErrorAction Stop
+              return "$($r.StatusCode) (visible to this token)"
+            }
+            catch {
+              $code = $_.Exception.Response.StatusCode.value__
+              if (-not $code) { $code = 'error' }
+              return "$code ($($_.Exception.Message))"
+            }
           }
 
           $sshReady = $false
@@ -120,12 +136,21 @@ jobs:
             }
 
             $htRepo = Test-Remote "https://x-access-token:$($env:UE4SS_PAT)@github.com/$env:UE4SS_REPO.git"
+            $htErr = $script:RemoteError
             $hueRepo = Test-Remote "https://x-access-token:$($env:UE4SS_PAT)@github.com/$env:UEPSS_REPO.git"
+            $hueErr = $script:RemoteError
             $httpsReady = $htRepo -and $hueRepo
+
             Write-Host "::warning::token belongs to: $login"
             Write-Host "::warning::token scopes: $scopes"
-            Write-Host "::warning::token reads $($env:UE4SS_REPO): $htRepo"
+            Write-Host "::warning::token reads $($env:UE4SS_REPO): $htRepo (public, so this proves nothing)"
             Write-Host "::warning::token reads $($env:UEPSS_REPO): $hueRepo"
+            Write-Host "::warning::API $($env:UEPSS_REPO): $(Test-Api $env:UEPSS_REPO)"
+            Write-Host "::warning::API UE4SS-RE/UEPseudo: $(Test-Api 'UE4SS-RE/UEPseudo')"
+            if (-not $hueRepo) {
+              $shown = $hueErr -replace [regex]::Escape($env:UE4SS_PAT), '***'
+              Write-Host "::warning::ls-remote error for $($env:UEPSS_REPO): $shown"
+            }
 
             if ($httpsReady) {
               $authed = "https://x-access-token:$($env:UE4SS_PAT)@github.com/"
