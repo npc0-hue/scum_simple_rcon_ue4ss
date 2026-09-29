@@ -16,6 +16,8 @@ env:
   # against must come from the same UE4SS revision the target server runs.
   # c838a8ac is the build behind UE4SS.dll sha256 d0107f63e567313c...
   UE4SS_REPO: npc0-hue/RE-UE4SS
+  # Private submodule holding the Unreal headers the UE4SS public headers need.
+  UEPSS_REPO: Re-UE4SS/UEPseudo
   UE4SS_REF: c838a8acaade1a0f860bdf249f039e58f4e10088
 
 jobs:
@@ -24,13 +26,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Check out UE4SS headers
+      - name: Check deploy key access
         shell: pwsh
         env:
           UE4SS_DEPLOY_KEY: ${{ secrets.UEPSS_DEPLOY_KEY }}
         run: |
           $ErrorActionPreference = 'Stop'
-          if (-not $env:UE4SS_DEPLOY_KEY) { throw 'secret UEPSS_DEPLOY_KEY is not set' }
+
+          $len = if ($env:UE4SS_DEPLOY_KEY) { $env:UE4SS_DEPLOY_KEY.Length } else { 0 }
+          Write-Host "UEPSS_DEPLOY_KEY length: $len"
+          if ($len -eq 0) {
+            Write-Host '::error::secret UEPSS_DEPLOY_KEY is empty for this repository.'
+            Write-Host 'Set it on npc0-hue/scum_simple_rcon_ue4ss under Settings -> Secrets and variables -> ACTIONS (not Dependabot secrets),'
+            Write-Host 'with the full private key body including the BEGIN and END lines.'
+            exit 1
+          }
 
           $sshDir = Join-Path $env:RUNNER_TEMP 'ssh'
           New-Item -ItemType Directory -Force -Path $sshDir | Out-Null
@@ -38,15 +48,35 @@ jobs:
           Set-Content -LiteralPath $keyPath -Value $env:UE4SS_DEPLOY_KEY -NoNewline -Encoding ascii
           icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
 
-          $env:GIT_SSH_COMMAND = "ssh -i `"$keyPath`" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=NUL"
+          $sshCmd = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $keyPath
+          $env:GIT_SSH_COMMAND = $sshCmd
+          "UE4SS_KEY_PATH=$keyPath" | Add-Content -LiteralPath $env:GITHUB_ENV
+
+          # Name the repository that is unreachable instead of failing opaquely.
+          foreach ($repo in @($env:UE4SS_REPO, $env:UEPSS_REPO)) {
+            $out = (git ls-remote "git@github.com:$repo.git" HEAD 2>&1 | Out-String).Trim()
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::deploy key cannot read $repo"
+              Write-Host $out
+              exit 1
+            }
+            Write-Host "reachable: $repo"
+          }
+
+      - name: Check out UE4SS headers
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sshCmd = 'ssh -i "{0}" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new' -f $env:UE4SS_KEY_PATH
+          $env:GIT_SSH_COMMAND = $sshCmd
 
           $src = Join-Path $env:RUNNER_TEMP 'ue4ss'
           git init --quiet $src
           git -C $src remote add origin "git@github.com:$env:UE4SS_REPO.git"
           git -C $src fetch --depth 1 origin $env:UE4SS_REF
           git -C $src checkout --quiet FETCH_HEAD
-          # Only deps/first/Unreal is needed: the UE4SS public headers include
-          # Unreal headers from it. patternsleuth is not in that closure.
+          # The UE4SS public headers include Unreal headers from this submodule.
+          # patternsleuth is not in that closure, so it is left uninitialized.
           git -C $src submodule update --init --depth 1 deps/first/Unreal
 
           $header = Join-Path $src 'UE4SS/include/UE4SSRuntime.hpp'
