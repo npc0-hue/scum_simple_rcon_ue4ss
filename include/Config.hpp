@@ -17,7 +17,7 @@ namespace simple_rcon
         int packet_body_bytes{4000};
         std::chrono::milliseconds command_timeout{std::chrono::milliseconds{10000}};
         std::string dispatch_context{"auto"};
-        bool offline_admin_dispatch{true};
+        bool native_admin_dispatch{true};
         bool native_admin_executor{true};
         bool allow_empty_password{false};
 

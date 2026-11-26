@@ -420,10 +420,9 @@ namespace
             return false;
         }
 
-        // A synthetic controller created for offline AdminCommand dispatch has
-        // no live UNetConnection. Requiring the inherited Player property to
-        // be an actual NetConnection prevents it (and CDOs) from ever becoming
-        // a chat recipient.
+        // Requiring the inherited Player property to be an actual
+        // NetConnection keeps class defaults and any non-network object from
+        // ever becoming a chat recipient.
         auto* player_property = find_property(controller->GetClassPrivate(), STR("Player"));
         if (!player_property || !player_property->IsA<RC::Unreal::FObjectProperty>())
         {

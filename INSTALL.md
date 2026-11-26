@@ -86,27 +86,26 @@ mcrcon -H 127.0.0.1 -P 27015 -p use-a-real-password rcon.chat
 
 Security note: keep `bind_address = 127.0.0.1` unless you are putting this behind a firewall/VPN. Source RCON is not encrypted.
 
-Before sending an `AdminCommand` (for example `SetTime`, `SpawnItem`, or an
-admin-targeted `SendNotification`), make sure the server has:
-
-```text
-<ServerInstall>\SCUM\Saved\Config\WindowsServer\AdminUsers.ini
-```
-
-with at least one 17-digit SteamID64. This mod intentionally does not fall back to the first online player.
-
-Ordinary `SendChat` is different: it only needs an authenticated RCON client
-and a real online recipient. It does not need `AdminUsers.ini`, does not create
-a controller/channel, and refuses a targeted send when that SteamID is not
-currently connected.
-
-For the no-player test, wait until the SCUM world has loaded, leave the server
-empty, then run `rcon.dispatch` followed by a harmless command such as:
+Before sending a native `AdminCommand`, connect a test player and use that
+player's exact 17-digit SteamID64 as the execution context:
 
 ```bat
-mcrcon -H 127.0.0.1 -P 27015 -p use-a-real-password SetTime 12
+mcrcon -H 127.0.0.1 -P 27015 -p use-a-real-password "!exec 7656119XXXXXXXXXX CheckServerTime"
 ```
 
-`rcon.dispatch` must report `synthetic=ready`. If the native executor signature
-is not found, do not force an address: the SCUM build changed and the mod needs
-an updated, tested signature.
+`!exec` requires a live network-backed `ConZPlayerController`, a live `Prisoner`
+pawn, and the real `AdminCommandExecutor` interface. It never creates a dummy
+player. The first SteamID selects the execution context and is not appended to
+the native arguments.
+
+Ordinary `SendChat` is separate: it only needs an authenticated RCON client and
+a real online recipient. Unprefixed fallback commands still use the optional
+`AdminUsers.ini` guard and intentionally do not fall back to the first online
+player.
+
+Wait until the SCUM world has loaded, then run `rcon.status`, `rcon.admins`, and
+`rcon.dispatch`. A healthy native probe reports one exact executor signature and
+a slot verified in live command CDO vtables. Before production use, run one
+harmless native command with an exact connected context and confirm both a
+successful response and a healthy SCUMServer process. If any identity, interface,
+class, Outer or vtable check fails, do not force an address or retry blindly.

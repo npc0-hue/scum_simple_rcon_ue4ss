@@ -12,7 +12,7 @@ RCON TCP worker
   -> EngineTick game-thread drain
   -> ScumBridge
        -> RealChatDispatcher       (ordinary SendChat)
-       -> OfflineAdminExecutor     (AdminCommand path)
+       -> NativeAdminExecutor      (!exec <SteamID64> AdminCommand path)
        -> server console fallback  (non-AdminCommand console commands)
 ```
 
@@ -23,23 +23,27 @@ RCON TCP worker
   execution inside its EngineTick drain.
 - `SimpleRconMod` exposes the internal diagnostics: `rcon.status`,
   `rcon.admins`, `rcon.dispatch`, and `rcon.chat`.
-- `ScumBridge` routes `SendChat` before checking `AdminUsers.ini`; all other
-  game commands follow the admin/offline-dispatch route.
+- `ScumBridge` routes `SendChat` and `!exec` before checking `AdminUsers.ini`.
+  Unprefixed game commands still use the server-console fallback and retain the
+  configured-admin guard.
 
 ## Admin-command route
 
-- `OfflineAdminExecutor` may create and reuse the synthetic
-  `BP_ConZPlayerController` and `Prisoner`. This exists only so native
-  SCUM `AdminCommand` execution can run with no human administrator online.
-- Read valid administrator SteamID64 values from
-  `SCUM/Saved/Config/WindowsServer/AdminUsers.ini`. Never hard-code one and
-  never substitute an arbitrary connected player or `PlayerRpcChannel`.
-- The selected ID must come from that file (the optional preferred ID is valid
-  only when also present there). Refresh a cached synthetic caller if the file
-  changes.
+- Native dispatch uses `!exec <SteamID64> <AdminCommand> [arguments]`. The ID
+  must match exactly one live network-backed `ConZPlayerController`, and that
+  controller must have a live `Prisoner` pawn and implement
+  `AdminCommandExecutor`.
+- Construct the registered command class with that real controller as its Outer.
+  Validate the class, vtable slot and Outer before the native call. Never create a
+  synthetic controller, pawn, interface pointer or network connection.
 - Resolve the native executor only through its exact, build-specific signature.
-  On zero or multiple matches, fail closed and report the problem; do not call a
-  guessed address or weaken the game's authorization check.
+  Derive its vtable slot from live command CDOs. On zero or multiple matches or
+  inconsistent slots, fail closed and do not call a guessed address.
+- A native exception leaves execution status unknown, latches native dispatch
+  off, and forbids automatic retry until the SCUM process restarts.
+- Unprefixed server-console commands still read valid administrator SteamID64
+  values from `SCUM/Saved/Config/WindowsServer/AdminUsers.ini`. Never hard-code
+  one and never substitute an arbitrary connected player or `PlayerRpcChannel`.
 
 ## Ordinary-chat route
 
@@ -67,13 +71,17 @@ RCON TCP worker
 
 - Keep command parsing and messages UTF-8-safe. Quoted RCON arguments contain
   spaces; do not append shell-style inline comments to command examples.
-- Keep `SendChat` semantics separate from notifications and admin commands.
-  An administrator may be offline; a chat recipient cannot be offline.
+- Keep `SendChat` semantics separate from notifications and native admin
+  commands. A chat recipient and a native execution context must both be online;
+  the native context is selected explicitly and must not be the first online
+  player by accident.
 - Update `README.md` and `INSTALL.md` with every externally visible behavior
   change. Describe what this repository does; do not retain stale feature
   comparison or proprietary-bundle claims.
 - Before committing, run `git diff --check`. On a Windows server built against
   the deployed UE4SS ABI, test `rcon.status`, `rcon.admins`, `rcon.dispatch`,
-  `rcon.chat`, one targeted `SendChat`, and one broadcast `SendChat`.
+  `rcon.chat`, one targeted `SendChat`, and one harmless `!exec` command with an
+  exact connected player. Require a native success and a healthy server process;
+  never use a dummy caller.
 - macOS-only checks cannot validate the final DLL/SCUM ABI. Do not claim a
   Windows runtime test passed until it has run on the target server.

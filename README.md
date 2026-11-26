@@ -7,9 +7,9 @@ This intentionally implements only the scope requested:
 - UE4SS C++ mod lifecycle: `start_mod`, `uninstall_mod`, `on_unreal_init`.
 - Source RCON server: TCP listener, password auth, request/response packet framing, multi-packet replies.
 - Game-thread queue: RCON worker threads enqueue commands; EngineTick drains and executes them.
-- Offline AdminCommand execution: builds a synthetic `BP_ConZPlayerController` + `Prisoner` in the dedicated-server world, then invokes SCUM's native `AdminCommand` executor. An administrator does **not** need to be online.
+- Native AdminCommand execution: `!exec <SteamID64> <command> [arguments]` resolves one exact online player, uses that player's real network-backed `ConZPlayerController` and live `Prisoner`, then invokes SCUM's native `AdminCommand` executor. It never creates a synthetic controller, pawn, interface or connection.
 - Unified RCON endpoint: normal admin commands and notifications enter through the authenticated, game-thread queue. `SendChat` has a deliberate chat-only branch: it uses SCUM `MiscStatics:SendChatLineToPlayer` against real, online target controllers, never a fabricated or arbitrary `PlayerRpcChannel`.
-- Admin identity guard: reads `SCUM/Saved/Config/WindowsServer/AdminUsers.ini` and refuses game commands when no configured admin SteamID64 exists, unless disabled in config.
+- Console-command identity guard: unprefixed fallback commands require `SCUM/Saved/Config/WindowsServer/AdminUsers.ini` to contain a valid SteamID64 unless disabled in config. Native `!exec` uses its explicit online execution context.
 
 The implementation fails closed when a required SCUM binding, native executor
 signature, or reflected function schema does not match the expected runtime
@@ -22,8 +22,8 @@ network channel.
 2. The mod reads `ue4ss/Mods/scum_simple_rcon/config.ini`.
 3. If the password is still `CHANGE_ME_BEFORE_USE`, the listener refuses to start.
 4. After RCON auth, any command except `rcon.status`, `rcon.admins`, and `rcon.help` is queued to the game thread. `rcon.dispatch` and `rcon.chat` are safe game-thread diagnostics.
-5. The game thread checks `AdminUsers.ini`, discovers SCUM `AdminCommand` classes, and creates/reuses a synthetic server-only caller.
-6. The mod resolves SCUM's native AdminCommand executor with one exact signature. It only calls the executor when exactly one match is found; otherwise it returns a clear error. Non-AdminCommand Unreal console commands use the server-console fallback.
+5. For `!exec`, the game thread resolves the exact SteamID to a live network-backed controller and verifies its `Prisoner` and `AdminCommandExecutor`. The command is constructed with that real controller as Outer.
+6. The mod resolves SCUM's native AdminCommand executor with one exact signature and derives the live vtable slot from command CDOs. A mismatch or native exception fails closed. Unprefixed Unreal console commands use the server-console fallback.
 
 `rcon.status` reports whether the game-thread consumer is actually alive, so a
 broken drain is distinguishable from a failing command. A healthy result is
@@ -31,7 +31,7 @@ broken drain is distinguishable from a failing command. A healthy result is
 EngineTick hook is missing, or is installed but has never fired, it returns
 `DEGRADED` with the reason instead of failing every later command as a timeout.
 
-Normal server admin commands can therefore run while the player count is **zero**. `SendChat` is not an admin command in this mod: it does not need `AdminUsers.ini`, but it does require each recipient to be online with a real network-backed controller. A player-targeted notification likewise needs its recipient online in order to be delivered/displayed; neither feature requires the administrator to be online.
+Native AdminCommands require an explicitly selected online execution context because SCUM's executor dereferences the real player controller and pawn. `SendChat` does not need `AdminUsers.ini`, but it also requires each recipient to be online with a real network-backed controller. A player-targeted notification needs its recipient online to be delivered or displayed. The selected native context does not imply that the command affects only that player.
 
 ## Example commands
 
@@ -40,17 +40,20 @@ rcon.status
 rcon.admins
 rcon.dispatch
 rcon.chat
+!exec 7656119XXXXXXXXXX CheckServerTime
+!exec 7656119XXXXXXXXXX SpawnItem Water_01 1
 Announce Hello from RCON
 SendChat 4 "Bounty claimed: +500" 7656119XXXXXXXXXX
 SendChat 2 "xxx killed xxx"
 SendNotification 2 0 "Welcome!" 7656119XXXXXXXXXX
 ```
 
-For `SendChat`, an omitted SteamID broadcasts by resolving and sending once to
-each real online controller. A supplied SteamID routes only to that controller.
-The implementation requires the controller's inherited `Player` object to be
-a real `UNetConnection`, so synthetic offline admin controllers and
-class-default objects are deliberately excluded.
+For `!exec`, the supplied SteamID is required and must match exactly one
+connected controller. It selects SCUM's execution context and is not appended to
+the native command arguments. For `SendChat`, an omitted SteamID broadcasts by
+resolving and sending once to each real online controller. A supplied SteamID
+routes only to that controller. Chat requires the controller's inherited `Player`
+object to be a real `UNetConnection`.
 
 The last example is a broadcast only to real online players. Do not add an
 inline `# ...` comment to an RCON command: it is command text, not a shell
@@ -79,18 +82,19 @@ Admin=7656119XXXXXXXXXX
 ```
 
 No SteamID is compiled into the DLL and no online `PlayerRpcChannel` is used as
-an admin surrogate. The file is re-read after changes; with multiple configured
-admins the dispatcher selects the lexicographically first valid ID, unless the
-optional `[admin] preferred_steam_id` names one that is also present in the file.
-An already-created synthetic caller refreshes its selected identity after a file
-change.
+an admin surrogate. The file and optional `[admin] preferred_steam_id` guard only
+the unprefixed server-console fallback. `!exec` instead requires its exact online
+context in the command itself.
 
-## Offline-dispatch diagnostics
+## Native-dispatch diagnostics
 
 Run `rcon.dispatch` after the world has loaded. A healthy result contains:
 
 ```text
-synthetic=ready; executor=native AdminCommand executor resolved by exact signature
+ok: native AdminCommand dispatcher ready; native_dispatch=enabled; native_executor=enabled
 ```
 
-If SCUM changes its executable code, the signature may no longer match. In that case the mod deliberately refuses to call a guessed address; update the signature for that SCUM build and retest on a non-production server.
+`executor=...` must report one exact code signature and a slot verified in live
+command CDO vtables. If SCUM changes its executable code or command layout, the
+checks fail before invocation. Update and retest on a non-production server
+against the actual SCUM and UE4SS build.

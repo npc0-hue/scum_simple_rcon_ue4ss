@@ -63,14 +63,14 @@ namespace simple_rcon
         m_admin_ids.clear();
         m_admin_file_seen = false;
         m_admin_users_last_write = {};
-        m_offline_executor.configure(config.offline_admin_dispatch, config.native_admin_executor);
+        m_native_admin.configure(config.native_admin_dispatch, config.native_admin_executor);
     }
 
     void ScumBridge::on_unreal_init()
     {
         std::scoped_lock lock{m_mutex};
         m_unreal_ready = true;
-        m_offline_executor.on_unreal_init();
+        m_native_admin.on_unreal_init();
         refresh_admin_ids_locked();
         RC::Output::send<RC::LogLevel::Verbose>(
             STR("[scum_simple_rcon] SCUM bridge ready; AdminUsers.ini: {} ({} IDs)\n"),
@@ -107,6 +107,22 @@ namespace simple_rcon
             return chat.success ? chat.message : "error: " + chat.message;
         }
 
+        // Native AdminCommand execution deliberately occurs before the
+        // AdminUsers.ini fallback. The first argument is the exact connected
+        // player whose real controller, Prisoner, and executor interface are
+        // required by SCUM's normal command path.
+        const auto native = m_native_admin.execute(cmd);
+        if (native.attempted)
+        {
+            return native.success ? native.message : "error: " + native.message;
+        }
+
+        if (cmd == "__scum_simple_rcon_probe__")
+        {
+            const auto probe = m_native_admin.probe();
+            return probe.success ? probe.message : "error: " + probe.message;
+        }
+
         refresh_admin_ids_locked();
         const std::string admin_id = selected_admin_id_locked();
         if (m_require_configured_admin && admin_id.empty())
@@ -114,29 +130,17 @@ namespace simple_rcon
             return "error: no valid SteamID64 found in AdminUsers.ini: " + path_to_utf8(m_admin_users_file);
         }
 
-        if (cmd == "__scum_simple_rcon_probe__")
-        {
-            const auto probe = m_offline_executor.probe(admin_id);
-            return probe.success ? probe.message : "error: " + probe.message;
-        }
-
-        const auto offline = m_offline_executor.execute(cmd, admin_id);
-        if (offline.attempted)
-        {
-            return offline.success ? offline.message : "error: " + offline.message;
-        }
-
         std::string context_detail;
         auto* context = resolve_server_context(context_detail);
         if (!context)
         {
-            return "error: offline dispatcher skipped (" + offline.message + ") and no server execution context: " + context_detail;
+            return "error: no server execution context: " + context_detail;
         }
 
         std::string dispatch_detail;
         if (!process_server_console(context, widen_utf8(cmd), dispatch_detail))
         {
-            return "error: offline dispatcher skipped (" + offline.message + ") and server console dispatch failed: " + dispatch_detail;
+            return "error: server console dispatch failed: " + dispatch_detail + "; use !exec <SteamID64> <command> for a native AdminCommand";
         }
 
         return "ok: server-console-dispatched '" + cmd + "'" +
@@ -162,7 +166,7 @@ namespace simple_rcon
     std::string ScumBridge::dispatch_status()
     {
         std::scoped_lock lock{m_mutex};
-        return m_offline_executor.status();
+        return m_native_admin.status();
     }
 
     RC::Unreal::UObject* ScumBridge::resolve_server_context(std::string& detail)

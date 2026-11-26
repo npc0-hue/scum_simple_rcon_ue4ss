@@ -9,7 +9,7 @@ add_library(${TARGET} SHARED
     src/RconServer.cpp
     src/CommandQueue.cpp
     src/ScumBridge.cpp
-    src/OfflineAdminExecutor.cpp
+    src/NativeAdminExecutor.cpp
     src/RealChatDispatcher.cpp
 )
 

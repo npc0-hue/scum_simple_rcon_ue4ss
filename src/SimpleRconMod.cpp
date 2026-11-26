@@ -10,6 +10,16 @@
 
 #include <DynamicOutput/DynamicOutput.hpp>
 #include <UE4SSRuntime.hpp>
+
+// Older Windows SDK headers turn these platform method names into Win32
+// intrinsic macros, which breaks UE4SS's qualified FPlatformAtomics calls.
+#ifdef InterlockedCompareExchangePointer
+#undef InterlockedCompareExchangePointer
+#endif
+#ifdef MemoryBarrier
+#undef MemoryBarrier
+#endif
+
 #include <Unreal/Hooks/Hooks.hpp>
 
 namespace
@@ -94,7 +104,8 @@ namespace simple_rcon
                 else if (section == "dispatch")
                 {
                     if (key == "context") cfg.dispatch_context = value;
-                    else if (key == "offline_admin_dispatch") cfg.offline_admin_dispatch = value == "true" || value == "1";
+                    else if (key == "native_admin_dispatch" || key == "offline_admin_dispatch")
+                        cfg.native_admin_dispatch = value == "true" || value == "1";
                     else if (key == "native_admin_executor") cfg.native_admin_executor = value == "true" || value == "1";
                 }
                 else if (section == "admin")
@@ -224,7 +235,7 @@ namespace simple_rcon
         }
         if (cmd == "rcon.help")
         {
-            return "internal: rcon.status, rcon.admins, rcon.dispatch, rcon.chat, rcon.help; SendChat uses real online controllers; otherwise send raw SCUM command text";
+            return "internal: rcon.status, rcon.admins, rcon.dispatch, rcon.chat, rcon.help; native AdminCommands use !exec <SteamID64> <command> [arguments]; SendChat uses real online controllers; unprefixed text uses the server-console fallback";
         }
         if (cmd == "rcon.admins")
         {

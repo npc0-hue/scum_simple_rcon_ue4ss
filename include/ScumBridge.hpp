@@ -7,7 +7,7 @@
 #include <vector>
 
 #include "Config.hpp"
-#include "OfflineAdminExecutor.hpp"
+#include "NativeAdminExecutor.hpp"
 #include "RealChatDispatcher.hpp"
 
 namespace RC::Unreal
@@ -43,7 +43,7 @@ namespace simple_rcon
         std::filesystem::file_time_type m_admin_users_last_write{};
         bool m_admin_file_seen{false};
         std::unordered_set<std::string> m_admin_ids;
-        OfflineAdminExecutor m_offline_executor;
+        NativeAdminExecutor m_native_admin;
         RealChatDispatcher m_real_chat;
     };
 }
