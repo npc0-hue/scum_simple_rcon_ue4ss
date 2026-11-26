@@ -23,7 +23,7 @@ network channel.
 3. If the password is still `CHANGE_ME_BEFORE_USE`, the listener refuses to start.
 4. After RCON auth, any command except `rcon.status`, `rcon.admins`, and `rcon.help` is queued to the game thread. `rcon.dispatch` and `rcon.chat` are safe game-thread diagnostics.
 5. For `!exec`, the game thread resolves the exact SteamID to a live network-backed controller and verifies its `Prisoner` and `AdminCommandExecutor`. The command is constructed with that real controller as Outer.
-6. The mod resolves SCUM's native AdminCommand executor with one exact signature and derives the live vtable slot from command CDOs. A mismatch or native exception fails closed. Unprefixed Unreal console commands use the server-console fallback.
+6. The mod verifies the current SCUM image fingerprint and build prologue without scanning the multi-megabyte `.text` section. It derives the shared response method and its adjacent executor slot from live `AdminCommand` CDO vtables, requires one unique consensus across the registry, and then calls the selected command's own executor. A mismatch or native exception fails closed. Unprefixed Unreal console commands use the server-console fallback.
 
 `rcon.status` reports whether the game-thread consumer is actually alive, so a
 broken drain is distinguishable from a failing command. A healthy result is
@@ -94,7 +94,13 @@ Run `rcon.dispatch` after the world has loaded. A healthy result contains:
 ok: native AdminCommand dispatcher ready; native_dispatch=enabled; native_executor=enabled
 ```
 
-`executor=...` must report one exact code signature and a slot verified in live
-command CDO vtables. If SCUM changes its executable code or command layout, the
-checks fail before invocation. Update and retest on a non-production server
-against the actual SCUM and UE4SS build.
+`executor=...` must report a matched SCUM build fingerprint, the build function,
+the live response function and derived response/executor vtable slots, the
+observed response consensus, and how many registered commands match that
+contract. Resolution uses the PE header, one pinned build prologue, and bounded
+CDO vtable reads rather than a `.text` scan. `game_thread_elapsed_us` separates
+plugin dispatch time from the rest of the RCON round trip. A requested verb
+outside the matching set is rejected before object construction. If SCUM changes
+its executable code or command layout, the checks fail before invocation.
+Update and retest on a non-production server against the actual SCUM and UE4SS
+build.

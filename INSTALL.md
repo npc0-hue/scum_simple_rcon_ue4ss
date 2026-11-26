@@ -104,8 +104,12 @@ a real online recipient. Unprefixed fallback commands still use the optional
 player.
 
 Wait until the SCUM world has loaded, then run `rcon.status`, `rcon.admins`, and
-`rcon.dispatch`. A healthy native probe reports one exact executor signature and
-a slot verified in live command CDO vtables. Before production use, run one
-harmless native command with an exact connected context and confirm both a
-successful response and a healthy SCUMServer process. If any identity, interface,
-class, Outer or vtable check fails, do not force an address or retry blindly.
+`rcon.dispatch`. A healthy native probe reports the verified SCUM build
+fingerprint, the build function, the live response function, the derived
+response/executor vtable slots, and how many registered commands match that
+contract. A verb outside the matching set is rejected before object
+construction. `game_thread_elapsed_us` reports time spent waiting for and
+running the game-thread probe. Before production use, run one harmless native
+command with an exact connected context and confirm both a successful response
+and a healthy SCUMServer process. If any identity, interface, class, Outer or
+vtable check fails, do not force an address or retry blindly.

@@ -1,6 +1,7 @@
 #include "SimpleRconMod.hpp"
 
 #include <algorithm>
+#include <chrono>
 #include <exception>
 #include <filesystem>
 #include <fstream>
@@ -128,7 +129,7 @@ namespace simple_rcon
           m_queue([this](const std::string& command) { return m_bridge.execute(command); })
     {
         ModName = STR("scum_simple_rcon");
-        ModVersion = STR("0.1.0");
+        ModVersion = STR("0.1.10");
         ModDescription = STR("Minimal Source RCON server for SCUM via UE4SS");
         ModAuthors = STR("Codex");
         m_bridge.configure(m_config, mod_dir());
@@ -243,17 +244,24 @@ namespace simple_rcon
         }
         if (cmd == "rcon.dispatch")
         {
-            // A dispatcher probe creates UObject state and scans the game
-            // executable, so it must take the exact same game-thread path as
-            // an actual RCON command.
-            return m_queue.enqueue_and_wait("__scum_simple_rcon_probe__", m_config.command_timeout);
+            // A dispatcher probe resolves the live command registry and vtables, so it
+            // must take the same game-thread path as an actual RCON command.
+            const auto started = std::chrono::steady_clock::now();
+            auto result = m_queue.enqueue_and_wait("__scum_simple_rcon_probe__", m_config.command_timeout);
+            const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+                std::chrono::steady_clock::now() - started);
+            return result + "; game_thread_elapsed_us=" + std::to_string(elapsed.count());
         }
         if (cmd == "rcon.chat")
         {
             return m_queue.enqueue_and_wait("__scum_simple_rcon_chat_probe__", m_config.command_timeout);
         }
 
-        return m_queue.enqueue_and_wait(cmd, m_config.command_timeout);
+        const auto started = std::chrono::steady_clock::now();
+        auto result = m_queue.enqueue_and_wait(cmd, m_config.command_timeout);
+        const auto elapsed = std::chrono::duration_cast<std::chrono::microseconds>(
+            std::chrono::steady_clock::now() - started);
+        return result + "; game_thread_elapsed_us=" + std::to_string(elapsed.count());
     }
 
     void SimpleRconMod::log(const std::string& line)
