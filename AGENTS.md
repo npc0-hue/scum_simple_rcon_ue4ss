@@ -29,7 +29,7 @@ RCON TCP worker
 ## Admin-command route
 
 - `OfflineAdminExecutor` may create and reuse the synthetic
-  `BP_ConZPlayerController` and `ConZCharacter`. This exists only so native
+  `BP_ConZPlayerController` and `Prisoner`. This exists only so native
   SCUM `AdminCommand` execution can run with no human administrator online.
 - Read valid administrator SteamID64 values from
   `SCUM/Saved/Config/WindowsServer/AdminUsers.ini`. Never hard-code one and

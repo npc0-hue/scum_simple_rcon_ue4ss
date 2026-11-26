@@ -7,7 +7,7 @@ This intentionally implements only the scope requested:
 - UE4SS C++ mod lifecycle: `start_mod`, `uninstall_mod`, `on_unreal_init`.
 - Source RCON server: TCP listener, password auth, request/response packet framing, multi-packet replies.
 - Game-thread queue: RCON worker threads enqueue commands; EngineTick drains and executes them.
-- Offline AdminCommand execution: builds a synthetic `BP_ConZPlayerController` + `ConZCharacter` in the dedicated-server world, then invokes SCUM's native `AdminCommand` executor. An administrator does **not** need to be online.
+- Offline AdminCommand execution: builds a synthetic `BP_ConZPlayerController` + `Prisoner` in the dedicated-server world, then invokes SCUM's native `AdminCommand` executor. An administrator does **not** need to be online.
 - Unified RCON endpoint: normal admin commands and notifications enter through the authenticated, game-thread queue. `SendChat` has a deliberate chat-only branch: it uses SCUM `MiscStatics:SendChatLineToPlayer` against real, online target controllers, never a fabricated or arbitrary `PlayerRpcChannel`.
 - Admin identity guard: reads `SCUM/Saved/Config/WindowsServer/AdminUsers.ini` and refuses game commands when no configured admin SteamID64 exists, unless disabled in config.
 

@@ -355,6 +355,7 @@ namespace simple_rcon
         std::unordered_map<std::string, UClass*> verbs;
         void* native_executor{};
         std::string bound_admin_steam_id;
+        std::string pawn_class_detail{"not spawned"};
         std::string native_executor_detail{"not resolved yet"};
         std::string last_context_detail{"not built yet"};
     };
@@ -569,6 +570,7 @@ namespace simple_rcon
                 state.pawn = nullptr;
                 state.user_profile = nullptr;
                 state.bound_admin_steam_id.clear();
+                state.pawn_class_detail = "not spawned";
                 state.last_context_detail = "world changed; synthetic caller will be rebuilt";
             }
 
@@ -628,14 +630,22 @@ namespace simple_rcon
             }
             best_effort_bind_admin_identity(controller, configured_admin_steam_id);
 
-            auto* character_class = find_object<UClass>(STR("/Script/SCUM.ConZCharacter"));
+            // SpawnItem and the other inventory/movement admin commands execute
+            // against a Prisoner pawn. ConZCharacter exists in the hierarchy but
+            // is too generic: SCUM's native executor returns 0 for it.
+            auto* prisoner_class = find_object<UClass>(STR("/Script/SCUM.Prisoner"));
+            auto* character_class = prisoner_class;
+            if (!character_class)
+            {
+                character_class = find_object<UClass>(STR("/Script/SCUM.ConZCharacter"));
+            }
             if (!character_class)
             {
                 character_class = find_object<UClass>(STR("/Script/ConZ.ConZCharacter"));
             }
             if (!character_class)
             {
-                detail = "ConZCharacter class is not loaded";
+                detail = "Prisoner/ConZCharacter class is not loaded";
                 return false;
             }
 
@@ -663,7 +673,13 @@ namespace simple_rcon
             state.controller = controller;
             state.pawn = pawn;
             state.bound_admin_steam_id = std::string{configured_admin_steam_id};
-            state.last_context_detail = "synthetic BP_ConZPlayerController + ConZCharacter ready";
+            auto* pawn_class = pawn->GetClassPrivate();
+            const bool pawn_is_prisoner = prisoner_class && pawn_class &&
+                                          class_is_child_of(pawn_class, prisoner_class);
+            state.pawn_class_detail = pawn_class ?
+                                      "pawn=" + narrow(pawn_class->GetName()) + "; prisoner=" + (pawn_is_prisoner ? "true" : "false") :
+                                      "pawn-class=missing; prisoner=false";
+            state.last_context_detail = "synthetic BP_ConZPlayerController ready; " + state.pawn_class_detail;
             detail = state.last_context_detail;
             return true;
         }
@@ -852,6 +868,7 @@ namespace simple_rcon
         }
         output << "; verbs=" << m_state->verbs.size()
                << "; synthetic=" << (m_state->controller && m_state->pawn ? "ready" : "not-ready")
+               << "; " << m_state->pawn_class_detail
                << "; context=" << m_state->last_context_detail
                << "; executor=" << m_state->native_executor_detail;
         return output.str();
