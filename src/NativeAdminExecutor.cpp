@@ -463,14 +463,38 @@ namespace simple_rcon
                 return false;
             }
 
-            if (live(state.registry) && state.registry->IsA(registry_class) && !state.verbs.empty())
+            if (valid(state.registry) && state.registry->IsA(registry_class) && !state.verbs.empty())
             {
                 detail = state.registry_detail;
                 return true;
             }
 
-            auto* registry = RC::Unreal::UObjectGlobals::FindFirstOf(STR("AdminCommandRegistry"));
-            if (!live(registry) || !registry->IsA(registry_class))
+            UObject* registry{};
+            auto* registry_default = registry_class->GetClassDefaultObject().Get();
+            if (valid(registry_default) &&
+                (registry_default->GetObjectFlags() & RC::Unreal::RF_ClassDefaultObject))
+            {
+                auto* default_commands = RC::Unreal::CastField<FArrayProperty>(
+                    registry_default->GetPropertyByNameInChain(STR("_commands")));
+                auto* default_class_inner = default_commands
+                    ? RC::Unreal::CastField<FClassProperty>(default_commands->GetInner())
+                    : nullptr;
+                if (default_commands && default_class_inner &&
+                    default_class_inner->GetElementSize() == sizeof(void*))
+                {
+                    FScriptArrayHelper default_values(
+                        default_commands, default_commands->ContainerPtrToValuePtr<void>(registry_default));
+                    if (default_values.Num() > 0 && default_values.Num() <= 4096)
+                    {
+                        registry = registry_default;
+                    }
+                }
+            }
+            if (!registry)
+            {
+                registry = RC::Unreal::UObjectGlobals::FindFirstOf(STR("AdminCommandRegistry"));
+            }
+            if (!valid(registry) || !registry->IsA(registry_class))
             {
                 state.registry = nullptr;
                 state.verbs.clear();

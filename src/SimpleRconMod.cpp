@@ -129,7 +129,7 @@ namespace simple_rcon
           m_queue([this](const std::string& command) { return m_bridge.execute(command); })
     {
         ModName = STR("scum_simple_rcon");
-        ModVersion = STR("0.1.10");
+        ModVersion = STR("0.1.11");
         ModDescription = STR("Minimal Source RCON server for SCUM via UE4SS");
         ModAuthors = STR("Codex");
         m_bridge.configure(m_config, mod_dir());
